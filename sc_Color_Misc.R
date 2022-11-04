@@ -1,5 +1,7 @@
-
-
+# 2022-11-04 scRNAseq Utils by HSY
+# BarPlotTheme - change barplot theme to highlight letters
+# GetLegendOnly - get legend of plot using cowplot
+# FeatureColGreyRed - new scale of featureplot color in grey to red 
 
 BarPlotTheme <- function(){
     return(theme(plot.title = element_text(size = 20, face = 'bold'),
