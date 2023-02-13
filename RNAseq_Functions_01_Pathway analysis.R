@@ -1,34 +1,33 @@
 library(msigdbr)
+library(glue)
+library(ReactomePA)
+
+library(clusterProfiler)
+library(enrichplot)
+library(GOSemSim)
+library(DOSE)
+library(ReactomePA)
+library(org.Mm.eg.db)
+library(ggsci)
+library(clipr)
+library(glue)
+
 
 m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% 
     dplyr::select(gs_name, entrez_gene)
 
+all.entrez.id <- read_table('./Data/gencode.vM29.metadata.EntrezGene', col_names = c('transcript_id','entrez_id')) %>% distinct(entrez_id) %>% pull(entrez_id) %>% as.character()
 
 
-getGOenrichPathways <- function(symbols, qvalcutoff = 0.5, pvalueCutoff = 0.5){
-    
-    entrez <- mapIds(org.Mm.eg.db,keys = symbols, column = 'ENTREZID', keytype = 'SYMBOL')
-    pathways <- list()
-    cat('GO BP enrichment analysis...\n')
-    pathways[['GO BP']] <- enrichGO(gene = symbols, 
-                                    OrgDb = org.Mm.eg.db, 
-                                    keyType = 'SYMBOL', 
-                                    ont = "BP", 
-                                    universe = normalized_counts$SYMBOL, 
-                                    qvalueCutoff = qvalcutoff,pvalueCutoff =  pvalueCutoff,
-                                    pAdjustMethod = "none" )
-    pathways[['GO BP']] <- simplify(pathways[['GO BP']])
-    
-    return(pathways)
-    
-}
+getAllenrichPathways <- function(symbols, 
+                                 qvalcutoff = 0.05, 
+                                 pvalcutoff = 0.05, 
+                                 addGeneFoldChange=TRUE, 
+                                 fc_data = NULL,
+                                 simplifyByTopGenes = TRUE, 
+                                 only.go.kegg = TRUE ){
 
-
-getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05, 
-                                 addGeneFoldChange=TRUE, fc_data = NULL,
-                                 simplifyByTopGenes = TRUE, only.go.kegg = TRUE ){
-
-    entrez <- mapIds(org.Mm.eg.db,keys = symbols, column = 'ENTREZID', keytype = 'SYMBOL')
+    entrez <- mapIds(org.Mm.eg.db, keys = symbols, column = 'ENTREZID', keytype = 'SYMBOL')
     pathways <- list()
     
     
@@ -47,8 +46,9 @@ getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05
                                                     OrgDb = org.Mm.eg.db, 
                                                     keyType = 'SYMBOL', 
                                                     ont = "BP", 
-                                                    universe = normalized_counts$SYMBOL, 
-                                                    qvalueCutoff = qvalcutoff,pvalueCutoff =  pvalueCutoff,
+                                                    universe = normalized.counts$SYMBOL, 
+                                                    qvalueCutoff = qvalcutoff,
+                                                    pvalueCutoff =  pvalcutoff,
                                                     pAdjustMethod = "BH" )
     pathways[['GO BP']] <- simplify(pathways[['GO BP']])
     })
@@ -60,16 +60,22 @@ getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05
     pathways[['KEGG']] <- enrichKEGG(gene = entrez, 
                                                      organism = "mmu",
                                                      universe = all.entrez.id,
-                                                     qvalueCutoff = 0.05 )
+                                                        
+                                                     qvalueCutoff = qvalcutoff ,
+                                                     pvalueCutoff =  pvalcutoff
+                                     
+                                     )
     pathways[['KEGG']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['KEGG']], keyType = 'ENTREZID')
     })
     cat('KEGG Module enrichment analysis...\n')
     
+    if(only.go.kegg ==FALSE){
     try(expr = {
     pathways[['KEGG.M']] <- enrichMKEGG(gene = entrez, 
                                                         organism = "mmu",
                                                         universe = all.entrez.id,
-                                                        qvalueCutoff = 0.2)
+                                                        qvalueCutoff = qvalcutoff,
+                                                        pvalueCutoff =  pvalcutoff)
     pathways[['KEGG.M']]  <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['KEGG.M']] , keyType = 'ENTREZID')
     })
     
@@ -78,8 +84,8 @@ getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05
     pathways[['WikiPathways']] <- enrichWP(gene = entrez,
              organism = "Mus musculus",
              universe = all.entrez.id,
-             pvalueCutoff = 0.05,
-             qvalueCutoff = 0.1 )
+             pvalueCutoff = pvalcutoff,
+             qvalueCutoff = qvalcutoff )
     pathways[['WikiPathways']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['WikiPathways']], keyType = 'ENTREZID')
     })
     cat('Reactome enrichment analysis...\n')
@@ -88,8 +94,8 @@ getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05
     pathways[['Reactome']] <- enrichPathway(gene = entrez, 
                                       organism = "mouse",
                                       universe = all.entrez.id,
-                                      pvalueCutoff = 0.05,
-                                      qvalueCutoff = 0.1 )
+                                      pvalueCutoff = pvalcutoff,
+                                      qvalueCutoff = qvalcutoff )
     pathways[['Reactome']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['Reactome']], keyType = 'ENTREZID')
     })
     
@@ -97,14 +103,14 @@ getAllenrichPathways <- function(symbols, qvalcutoff = 0.05, pvalueCutoff = 0.05
     try(expr = {
     pathways[['MsigHall']] <- enricher(gene = entrez,
                                        universe = all.entrez.id,
-                                        pvalueCutoff = 0.05,
-                                       qvalueCutoff = 0.1, 
+                                        pvalueCutoff = pvalcutoff,
+                                       qvalueCutoff = qvalcutoff, 
                                        TERM2GENE = m_t2g
                                        
                                        )
     pathways[['MsigHall']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['MsigHall']], keyType = 'ENTREZID')
     })
-    
+    }
     
     modules <- names(pathways[!sapply(pathways, is.null)])
     if(addGeneFoldChange == TRUE){
@@ -151,7 +157,7 @@ addGeneFoldChange <- function(enrichresult, fc_data = top_genes_filt, top_genes 
         gs <- stringr::str_split(string = x$geneID[i], pattern = '/')[[1]]
         fcs <- fc_data[fc_data$SYMBOL %in% gs, c("log2FoldChange",'SYMBOL'), drop = FALSE] %>% as.data.frame() %>% 
             dplyr::arrange(desc(abs(log2FoldChange))) %>% distinct(SYMBOL, .keep_all = TRUE)
-        g_fc <- paste0(fcs$SYMBOL, '(',round(fcs$log2FoldChange,2),')')
+        g_fc <- paste0(fcs$SYMBOL, '(',round(2^(fcs$log2FoldChange),2),')')
         
         attributes(enrichresult)$top.genes[[x$ID[i]]] <- fcs$SYMBOL
         
@@ -188,16 +194,36 @@ goBarPlot <- function(enrichresult, title='GO BP results',
                       annotation = TRUE, alpha = 0.3, 
                       description_width = 30,
                       annotation_width = 80,
-                      showCategory = 12){
+                      showCategory = 12, sorted = 'p.adjust', desc= FALSE, subset = NULL){
     
     df <- enrichresult@result
+    df$geneset_count <- gsub(x=df$BgRatio,pattern = "/.*",replacement = "")
     df$GeneRatio <- sapply(df$GeneRatio, function(txt) eval(parse(text=txt)))
-    df <- df %>% arrange(p.adjust) %>% slice_head(n = showCategory) %>% mutate(Description = factor(Description, levels = Description))
+    df$Description <- gsub(x = df$Description, pattern = "_", replacement = " ") 
+    df$Description <- paste0(df$Count,'/',df$geneset_count, ' ',df$Description)
+    total_deg <- length(enrichresult@gene)
+    xlab <- paste0('GeneRatio (Total DEG:', total_deg, ')')
+    if(desc == TRUE){
+        df <- df %>% arrange(desc(.[[sorted]])) %>% slice_head(n = showCategory) %>% mutate(Description = factor(Description, levels = Description))
+    }else{
+        df <- df %>% arrange(.[[sorted]]) %>% slice_head(n = showCategory) %>% mutate(Description = factor(Description, levels = Description))
+        
+    }
+    
+    if(!is.null(subset)){
+        
+        df <- df[subset,]
+        
+    }
+    
+    
+    
     
     p <- ggplot(df, aes(x = GeneRatio, y = Description)) +
         geom_col(fill = 'darkblue', width = 0.8, alpha = alpha) +
         scale_y_discrete(label = function(x) stringr::str_wrap(x, width = description_width), limits = rev) +
         scale_x_continuous(expand = expansion(mult = c(0,0.1))) +
+        xlab(xlab) +
         theme_classic() + 
         theme(axis.text.y = element_text(face='bold',size=11, color='black'), 
               axis.title.y = element_blank(),
@@ -205,22 +231,35 @@ goBarPlot <- function(enrichresult, title='GO BP results',
         ggtitle(title)
 
     if(annotation == TRUE){
-        p <- p + 
+       tryCatch(expr={ 
+           p <- p + 
             geom_text(aes(label=stringr::str_wrap(geneID_FC_top_genes, width = annotation_width), x= 0), 
                       hjust = -0.01, size=4, fontface='bold') 
+       })
     }
     p
     return(p)
 }
 
 
-cluster.path.go.plot <- function(cluster.all, subcluster, title ="HFD KO DOWN C1", fc_data = res.hfd.ko.hfd.wt.table) {
+cluster.path.go.plot <- function(cluster.all, subcluster, 
+                                 title ="HFD KO DOWN C1", 
+                                 fc_data = res.hfd.ko.hfd.wt.table, pvalcutoff = 0.05, qvalcutoff = 0.1,
+                                 only.go.kegg = TRUE) {
     
-    path <-  getGOenrichPathways(cluster.all %>% filter(cluster %in% subcluster) %>% pull(SYMBOL) %>% unique(), qvalcutoff = 0.7)
-    path[['GO BP']] <- addGeneFoldChange(path[['GO BP']], fc_data = fc_data)
-    print(goBarPlot(simplifyByTopGenes( path[['GO BP']]), title = title))
+    
+    subcluster.symbols <- cluster.all %>% filter(cluster %in% subcluster) %>% pull(SYMBOL) %>% unique()
+    
+    path <- getAllenrichPathways(subcluster.symbols, 
+                             qvalcutoff = qvalcutoff, 
+                            pvalcutoff = pvalcutoff, 
+                        addGeneFoldChange=TRUE, 
+                        fc_data = fc_data,
+                        simplifyByTopGenes = TRUE, 
+                        only.go.kegg = only.go.kegg )
+    print(goBarPlot(path[['GO BP']], title = title, sorted = 'GeneRatio', desc = TRUE))
     print(clusterPlot2(cluster.all %>% filter(cluster %in% subcluster)))
-    
+    return(path)
 } 
 
 

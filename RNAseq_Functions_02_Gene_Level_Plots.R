@@ -3,21 +3,32 @@ library(cowplot)
 library(ggpubr)
 library(ggh4x)
 
-genePlot <- function(symbol, stats = TRUE, 
-                     group = c("CHOW_WT",   "CDAHFD_WT" ,"CHOW_KO"   ,"CDAHFD_KO"), 
-                     title = NULL, 
-                     my_comparisons = list( c("CHOW_WT", "CHOW_KO"), 
-                                            c("CDAHFD_WT", "CDAHFD_KO"),
-                                            c("CHOW_KO","CDAHFD_KO"), 
-                                            c("CHOW_WT", "CDAHFD_WT")), force_zero = TRUE)
-    {
 
-    g2id <- id2symbol.g29$gene_id[id2symbol.g29$SYMBOL == symbol]
+genePlot <- function(symbol=NULL,gene_id=NULL,dds=dds, stats = TRUE, 
+                     group = NULL, 
+                     title = NULL, 
+                     my_comparisons = list( c("Antrum_Ctrl_SPF", "Antrum_Ctrl_GF")), 
+                     force_zero = TRUE, x.angle = 90)
+{
     
-    geneCounts <- plotCounts(dds, gene = g2id, intgroup = "group", normalized = TRUE,
-                             returnData = TRUE)
+    if(is.null(gene_id)){
+        g2id <- id2symbol.g29$gene_id[id2symbol.g29$SYMBOL == symbol][1]
+        
+        geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", normalized = TRUE,
+                                 returnData = TRUE, transform =FALSE)
+        
+    }else{
+        g2id <- gene_id
+        geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", normalized = TRUE,
+                                 returnData = TRUE, transform =FALSE)
+        symbol <- id2symbol.g29$SYMBOL[id2symbol.g29$gene_id == gene_id][1]
+    }
+    
+    
+    gene_name <- symbol2genename$gene_name[symbol2genename$SYMBOL == symbol]
     if(is.null(title)){
-        title <- paste0(symbol," Expression")
+        title <- paste0(symbol, " Expression")
+        subtitle <- gene_name
     }
     
     if(!is.null(group)){
@@ -26,11 +37,17 @@ genePlot <- function(symbol, stats = TRUE,
     
     p <- ggboxplot(geneCounts, x = "group", y = "count", 
                    add = "jitter", 
-                   title = title, 
-                   ylab = "Normalized Counts") + 
-        theme(axis.title = element_text(size=15), 
+                   title = title, subtitle = subtitle,
+                   ylab = "Normalized Counts", 
+                   width = 0.7, 
+                   lwd = 1.2, 
+                   fatten = 3) + 
+        theme(title = element_text(size=20, face='bold'), 
+              plot.subtitle = element_text(size=15, face='bold'),
               axis.title.x = element_blank(),
-        axis.text.x = element_text(size = 9, face='bold')) 
+              axis.text.x = element_text(size = 18, face='bold', angle = x.angle), 
+              axis.text.y = element_text(size = 18, face='bold'), 
+              axis.title.y = element_text(size = 18, face='bold')) 
     
     
     if(force_zero == TRUE){
@@ -41,17 +58,17 @@ genePlot <- function(symbol, stats = TRUE,
     
     
     if(stats == TRUE)
-        {
+    {
         anova.p <- compare_means(count ~ group, geneCounts, method = "kruskal.test")
         anova.subtitle <- paste0(anova.p$method, ' p: ', anova.p$p.format)
         p <- p + stat_compare_means(comparisons = my_comparisons, method = "wilcox.test") + # Add pairwise comparisons p-value
-                labs(subtitle = anova.subtitle)  # Add global p-value
-    
-        }
+            labs(subtitle = anova.subtitle)  # Add global p-value
+        
+    }
     
     
     p
-
+    
 }
 
 
@@ -61,10 +78,16 @@ ExpCompPlot <- function(table = res.hfd.ko.chow.ko.table, x= 'CHOW_KO', y = 'CDA
     table$sig.gene <- ifelse(table$gene_id %in% sig.gene.id,1,0)
     table$sig.gene <- factor(table$sig.gene, levels = c(0,1))
     table$label <- ''
+    
+    if(!is.null(label)){
+        table$label <- ifelse(table$SYMBOL %in% label,table$SYMBOL,'')
+        
+    }
+    
     p <- ggplot(table, aes(x= .data[[x]], y=.data[[y]], label = SYMBOL)) +
         geom_point(aes(color = sig.gene)) + 
         scale_color_manual(values = c('grey','red')) + 
-       geom_label_repel(max.overlaps = 1000, aes(label= label)) + 
+        geom_label_repel(max.overlaps = 1000, aes(label= label)) + 
         scale_x_log10(labels = scales::label_number()) + 
         scale_y_log10(labels = scales::label_number()) +
         stat_regline_equation(formula = y ~ x, aes(label = ..rr.label..), 
@@ -73,18 +96,23 @@ ExpCompPlot <- function(table = res.hfd.ko.chow.ko.table, x= 'CHOW_KO', y = 'CDA
         coord_cartesian(xlim = c(0.1, 100000), ylim=c(0.1, 100000)) +
         theme_bw() + theme(legend.position = 'none') +
         labs(title = title)
-
-
+    
+    
     p
-
-
+    
+    
 }
 
 
-clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group= c('CHOW_WT','CDAHFD_WT','CHOW_KO','CDAHFD_KO'), interaction = NULL, ncol=NULL){
+clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group=NULL, interaction = NULL, ncol=NULL, 
+                        normalized_counts.group=normalized_counts.group ){
     
     
-    normal.count.mtx <- normal.count.mtx.all[gene_ids, ]
+    normal.count.mtx.all <- normalized_counts.group %>% 
+        dplyr::select(-SYMBOL) %>%
+        column_to_rownames('gene_id') %>% 
+        as.matrix()
+    normal.count.mtx <- normal.count.mtx.all[gene_ids,group]
     normal.count.mtx <- normal.count.mtx %>% t() %>% scale() %>% t()
     gene_dist <- dist(normal.count.mtx)
     normal.count.mtx.df <- as.data.frame(normal.count.mtx) %>% rownames_to_column('gene_id')
@@ -108,26 +136,6 @@ clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group= c('CHOW_WT','CDAHFD
     
     trans_cts_cluster$group <- factor(trans_cts_cluster$group, levels = group)
     
-    if(!is.null(interaction)){
-        
-        trans_cts_cluster$isKO <- ifelse(trans_cts_cluster$group %in% c('CHOW_WT','CDAHFD_WT'),'WT','KO')
-        trans_cts_cluster$isKO <- factor(trans_cts_cluster$isKO, levels = c('WT','KO'))
-        trans_cts_cluster$org.group <- trans_cts_cluster$group 
-        levels(trans_cts_cluster$group) <- c('CHOW','HFD','CHOW','HFD')
-        
-        p<- trans_cts_cluster %>% 
-            ggplot(aes(group, cts)) +
-            geom_line(aes(group = gene_id), alpha = 0.3) +
-            geom_line(stat = "summary", fun = "median", colour = "brown", linewidth = 1.5, 
-                      aes(group = 1)) + 
-            geom_hline(yintercept = 0) +
-            facet_nested_wrap(vars(cluster_label,isKO), dir = "h", ncol = ncol) +
-            ylab("z-expression") + scale_x_discrete(expand = expansion(mult = 0.2)) + 
-            theme_bw() + 
-            theme(text = element_text(face='bold', size = 15), 
-                  axis.title.x = element_blank())
-        
-    }
     
     p<- trans_cts_cluster %>% 
         ggplot(aes(group, cts)) +
@@ -139,11 +147,75 @@ clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group= c('CHOW_WT','CDAHFD
         ylab("z-expression") + 
         theme_bw() + 
         theme(text = element_text(face='bold', size = 15), 
-              axis.title.x = element_blank())
+              axis.title.x = element_blank(),axis.text.x = element_text(angle = 90))
     
     
     print(p)
     return(trans_cts_cluster)
     
 }
+
+
+clusterPlot.only <- function(trans_cts_cluster){
+    
+    p<- trans_cts_cluster %>% 
+        ggplot(aes(group, cts)) +
+        geom_line(aes(group = gene_id), alpha = 0.3) +
+        geom_line(stat = "summary", fun = "median", colour = "brown", linewidth = 1.5, 
+                  aes(group = 1)) + 
+        geom_hline(yintercept = 0) +
+        facet_wrap(vars(cluster_label)) +
+        ylab("z-expression") + 
+        theme_bw() + 
+        theme(text = element_text(face='bold', size = 15), 
+              axis.title.x = element_blank(),
+              axis.text.x = element_text(angle = 90))
+    return(p)
+    
+    
+}
+
+clusterPlot2 <-function(cluster_df){
+    
+    cluster_df %>% ggplot(aes(group, cts)) +
+        geom_line(aes(group = gene_id), alpha = 0.3) +
+        geom_line(stat = "summary", fun = "median", colour = "brown", linewidth = 1.5, 
+                  aes(group = 1)) + 
+        geom_hline(yintercept = 0) +
+        facet_wrap(vars(cluster_label)) +
+        ylab("z-expression")+ 
+        theme_bw() + 
+        theme(text = element_text(face='bold', size = 15), 
+              axis.title.x = element_blank(), 
+              axis.text.x = element_text(angle = 90))
+}
+
+
+saveGenePlot <- function(symbols=NULL, gene_ids = NULL, path='./Figure/', width =18 , height = 13, device = 'png', dpi = 300){
+    
+    if(!is.null(gene_ids)){
+        stopifnot(length(symbols) == length(gene_ids))
+    }
+    
+    l <- list()
+    for(i in 1:length(symbols)){
+        print(symbols[i])
+        if(!is.null(gene_ids)){
+            l[[i]] <- genePlot(gene_id = gene_ids[i], dds = dds, stats = FALSE)
+            
+        }else{ l[[i]] <- genePlot(symbols[i], dds = dds, stats = FALSE)}
+    }
+    
+    for(i in 1:length(l)){
+        print(i)
+        ggsave(filename = glue('{symbols[i]}.png'), 
+               plot = l[[i]],
+               device = device, units = "cm", width = width, height = height, path = path, dpi = dpi)
+        
+    }
+    
+    
+}
+
+
 
