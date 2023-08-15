@@ -3,29 +3,39 @@ library(cowplot)
 library(ggpubr)
 library(ggh4x)
 
-
-genePlot <- function(symbol=NULL,gene_id=NULL,dds=dds, stats = TRUE, 
+genePlot <- function(symbol=NULL,
+                     gene_id=NULL,
+                     dds=dds, 
+                     stats = FALSE, 
                      group = NULL, 
                      title = NULL, 
                      my_comparisons = list( c("Antrum_Ctrl_SPF", "Antrum_Ctrl_GF")), 
-                     force_zero = TRUE, x.angle = 90)
-{
+                     force_zero = TRUE, 
+                     x.angle = 90, 
+                     meta.data = meta.data, 
+                     color = NULL, 
+                     alpha = NULL, 
+                     barplot = FALSE)
+    {
     
     if(is.null(gene_id)){
-        g2id <- id2symbol.g29$gene_id[id2symbol.g29$SYMBOL == symbol][1]
+        g2id <- gene.annotation$gene_id[gene.annotation$SYMBOL == symbol][1]
         
-        geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", normalized = TRUE,
+        geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", 
+                                 normalized = TRUE,
                                  returnData = TRUE, transform =FALSE)
         
     }else{
         g2id <- gene_id
         geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", normalized = TRUE,
                                  returnData = TRUE, transform =FALSE)
-        symbol <- id2symbol.g29$SYMBOL[id2symbol.g29$gene_id == gene_id][1]
+        symbol <- gene.annotation$SYMBOL[gene.annotation$gene_id == gene_id][1]
     }
     
+
+    gene_name <- gene.annotation$gene_name[gene.annotation$SYMBOL == symbol]
     
-    gene_name <- symbol2genename$gene_name[symbol2genename$SYMBOL == symbol]
+    
     if(is.null(title)){
         title <- paste0(symbol, " Expression")
         subtitle <- gene_name
@@ -34,20 +44,52 @@ genePlot <- function(symbol=NULL,gene_id=NULL,dds=dds, stats = TRUE,
     if(!is.null(group)){
         geneCounts$group <- factor(geneCounts$group, levels =  group)
     }
+    if(!is.null(meta.data)){
+        geneCounts <- geneCounts %>% rownames_to_column('sample_id') %>% left_join(meta.data)
+    }
+    
     
     p <- ggboxplot(geneCounts, x = "group", y = "count", 
                    add = "jitter", 
                    title = title, subtitle = subtitle,
-                   ylab = "Normalized Counts", 
+                   # color = color, 
+                   # fill = color,
+                   # alpha = alpha,
+                   palette = 'lancet',
+                   ylab = "Normalized Counts",
                    width = 0.7, 
-                   lwd = 1.2, 
-                   fatten = 3) + 
+                   lwd = 0.5, 
+                   fatten = 0.8) + 
+        scale_alpha_manual(values = c(0,0.2)) +
         theme(title = element_text(size=20, face='bold'), 
-              plot.subtitle = element_text(size=15, face='bold'),
+              plot.subtitle = element_text(size = 12,face='bold'),
               axis.title.x = element_blank(),
               axis.text.x = element_text(size = 18, face='bold', angle = x.angle), 
               axis.text.y = element_text(size = 18, face='bold'), 
-              axis.title.y = element_text(size = 18, face='bold')) 
+              axis.title.y = element_text(size = 18, face='bold'),
+              legend.position = 'none') 
+    
+    if(barplot){
+        
+        # BARPLOT
+        p <- ggbarplot(geneCounts, x = "group", 
+                       y = "count", 
+                       add = c("mean_se","jitter"),
+                       title = title, 
+                       subtitle = subtitle,
+                       color = color, 
+                       palette = 'lancet',
+                       ylab = "Normalized Counts") + 
+            scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
+            theme(title = element_text(size=20, face='bold'), 
+                  subtitle = element_text(size = 12,face='bold'),
+                  axis.title.x = element_blank(),
+                  axis.text.x = element_text(size = 18, face='bold', angle = x.angle), 
+                  axis.text.y = element_text(size = 18, face='bold'), 
+                  axis.title.y = element_text(size = 18, face='bold'),
+                  legend.position = 'none') 
+        
+    }
     
     
     if(force_zero == TRUE){
@@ -58,17 +100,17 @@ genePlot <- function(symbol=NULL,gene_id=NULL,dds=dds, stats = TRUE,
     
     
     if(stats == TRUE)
-    {
+        {
         anova.p <- compare_means(count ~ group, geneCounts, method = "kruskal.test")
         anova.subtitle <- paste0(anova.p$method, ' p: ', anova.p$p.format)
         p <- p + stat_compare_means(comparisons = my_comparisons, method = "wilcox.test") + # Add pairwise comparisons p-value
-            labs(subtitle = anova.subtitle)  # Add global p-value
-        
-    }
+                labs(subtitle = anova.subtitle)  # Add global p-value
+    
+        }
     
     
     p
-    
+
 }
 
 
@@ -83,11 +125,11 @@ ExpCompPlot <- function(table = res.hfd.ko.chow.ko.table, x= 'CHOW_KO', y = 'CDA
         table$label <- ifelse(table$SYMBOL %in% label,table$SYMBOL,'')
         
     }
-    
+
     p <- ggplot(table, aes(x= .data[[x]], y=.data[[y]], label = SYMBOL)) +
         geom_point(aes(color = sig.gene)) + 
         scale_color_manual(values = c('grey','red')) + 
-        geom_label_repel(max.overlaps = 1000, aes(label= label)) + 
+       geom_label_repel(max.overlaps = 1000, aes(label= label)) + 
         scale_x_log10(labels = scales::label_number()) + 
         scale_y_log10(labels = scales::label_number()) +
         stat_regline_equation(formula = y ~ x, aes(label = ..rr.label..), 
@@ -96,22 +138,26 @@ ExpCompPlot <- function(table = res.hfd.ko.chow.ko.table, x= 'CHOW_KO', y = 'CDA
         coord_cartesian(xlim = c(0.1, 100000), ylim=c(0.1, 100000)) +
         theme_bw() + theme(legend.position = 'none') +
         labs(title = title)
-    
-    
+
+
     p
-    
-    
+
+
 }
 
 
-clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group=NULL, interaction = NULL, ncol=NULL, 
-                        normalized_counts.group=normalized_counts.group ){
+clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, 
+                        group=NULL, 
+                        interaction = NULL, 
+                        ncol=NULL, 
+                        normalized.counts.group=normalized.counts.group ){
     
     
-    normal.count.mtx.all <- normalized_counts.group %>% 
+    normal.count.mtx.all <- normalized.counts.group %>% 
         dplyr::select(-SYMBOL) %>%
         column_to_rownames('gene_id') %>% 
         as.matrix()
+    
     normal.count.mtx <- normal.count.mtx.all[gene_ids,group]
     normal.count.mtx <- normal.count.mtx %>% t() %>% scale() %>% t()
     gene_dist <- dist(normal.count.mtx)
@@ -126,28 +172,17 @@ clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group=NULL, interaction = 
     gene_cluster <- cutree(gene_hclust, k = cluster_k) %>% 
         # turn the named vector into a tibble
         enframe() %>% 
-        # rename some of the columns
         rename(gene_id = name, cluster = value)
     
     trans_cts_cluster <- normal.count.mtx.df %>% 
         inner_join(gene_cluster, by = "gene_id") %>% group_by(cluster) %>% mutate(gene_n=n()) %>% 
         pivot_longer(cols = c(-gene_id,-cluster,-gene_n), names_to = 'group',values_to = 'cts') %>% 
-        ungroup() %>% mutate(cluster_label = paste0(cluster, " (",gene_n," genes)")) %>% left_join(id2symbol.g29)
+        ungroup() %>% mutate(cluster_label = paste0(cluster, " (",gene_n," genes)")) %>% left_join(gene.annotation)
     
     trans_cts_cluster$group <- factor(trans_cts_cluster$group, levels = group)
     
     
-    p<- trans_cts_cluster %>% 
-        ggplot(aes(group, cts)) +
-        geom_line(aes(group = gene_id), alpha = 0.3) +
-        geom_line(stat = "summary", fun = "median", colour = "brown", linewidth = 1.5, 
-                  aes(group = 1)) + 
-        geom_hline(yintercept = 0) +
-        facet_wrap(vars(cluster_label)) +
-        ylab("z-expression") + 
-        theme_bw() + 
-        theme(text = element_text(face='bold', size = 15), 
-              axis.title.x = element_blank(),axis.text.x = element_text(angle = 90))
+    p<- clusterPlot.only(trans_cts_cluster)
     
     
     print(p)
@@ -156,11 +191,11 @@ clusterPlot <- function(gene_ids, h= 4, cluster_k= 4, group=NULL, interaction = 
 }
 
 
-clusterPlot.only <- function(trans_cts_cluster){
+clusterPlot.only <- function(trans_cts_cluster, alpha = 0.1){
     
     p<- trans_cts_cluster %>% 
         ggplot(aes(group, cts)) +
-        geom_line(aes(group = gene_id), alpha = 0.3) +
+        geom_line(aes(group = gene_id), alpha = alpha) +
         geom_line(stat = "summary", fun = "median", colour = "brown", linewidth = 1.5, 
                   aes(group = 1)) + 
         geom_hline(yintercept = 0) +
@@ -216,6 +251,4 @@ saveGenePlot <- function(symbols=NULL, gene_ids = NULL, path='./Figure/', width 
     
     
 }
-
-
 

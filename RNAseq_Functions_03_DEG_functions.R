@@ -7,29 +7,36 @@
 # RNAseq functions 3 - DEG Functions #####
 #
 
-getresGeneTable <- function(dds= dds.all.clean, name=NULL, contrast=NULL, compare.groups, alpha = 0.1){
+
+library(ggVennDiagram)
+
+
+getresGeneTable <- function(dds= dds, name=NULL, contrast=NULL, 
+                            compare.groups, 
+                            alpha = 0.1, 
+                            lfcThreshold = 0,
+                            normalized.counts.group){
     
     res <- NULL
     if(!is.null(name)){
         res <- results(dds, 
                        name = name,
-                       alpha = alpha,
-                       filter = rowMeans(normal.count.mtx.all[,compare.groups])
+                       alpha = alpha, 
+                       lfcThreshold = lfcThreshold )
                        
-        )
+        
     }
     if(!is.null(contrast)){
+        print(contrast)
         res <- results(dds, 
                        contrast = contrast,
                        alpha = alpha,
-                       filter = rowMeans(normal.count.mtx.all[,compare.groups])
-                       
-        ) 
+                       lfcThreshold = lfcThreshold)
         
     }
     
     
-    res.df <- res %>% data.frame() %>% rownames_to_column(var="gene_id") %>% left_join(id2symbol.g29)
+    res.df <- res %>% data.frame() %>% rownames_to_column(var="gene_id") %>% left_join(gene.annotation)
     res.df <- res.df %>% as_tibble() %>% left_join(normalized.counts.group) 
     
     res.df$maxExp <- rowMaxs(
@@ -53,80 +60,171 @@ getresGeneTable <- function(dds= dds.all.clean, name=NULL, contrast=NULL, compar
     
 }
 
+getAllResGeneTables <- function(combination_table = compare.combination,
+                                normalized.counts.group = normalized.counts.group,
+                                dds = dds, 
+                                lfcThreshold= 0,
+                                alpha = 0.1){
+    # combination_table : group1, group2, compare ( group1_vs_group2)
+    
+    all.combination.res.tables <- list()
+    
+    for(i in 1:nrow(combination_table)){
+        cat(paste0(combination_table$compare[i], ' ', i, '/',nrow(combination_table),' ',all.combination$compare[i]), sep = '\n')
+        
+        suppressMessages(expr = { 
+            all.combination.res.tables[[combination_table$compare[i]]] <- 
+                getresGeneTable(dds = dds, 
+                                contrast = c("group", combination_table$group1[i], combination_table$group2[i]), 
+                                compare.groups = c(combination_table$group1[i],combination_table$group2[i] ), 
+                                alpha = alpha, 
+                                lfcThreshold= lfcThreshold,
+                                normalized.counts.group = normalized.counts.group)
+        })
+        
+    }
+    
+    return(all.combination.res.tables)
+}
+
+ResTablesToUpDown <- function(list){
+    
+    sigList <- list()
+    
+    for(i in 1:length(list)){
+        
+        t <- list[[i]]
+        up_name <- paste0(names(list)[i], "_UP")
+        dn_name <- paste0(names(list)[i], "_DN")
+        
+        sigList[[up_name]] <- t %>% filter(log2FoldChange > 0)
+        sigList[[dn_name]] <- t %>% filter(log2FoldChange < 0) 
+        
+        
+    }
+    
+    return(sigList)
+}
 
 
-
-group.dge <- function(dds=dds.all.clean, 
+# Get DEG 
+getGroupDEGs <- function(dds=dds, 
                       group1, group2, 
                       all.res.tables = NULL,
-                      padj_val = 0.1, 
-                      log2FC = 1, 
-                      maxExp = 10, 
-                      maxMedian = 20, 
-                      maxMin = 10, 
-                      wilcox.p = 0.4, 
-                      minMaxDiff = 5,
-                      expression_cutoff=NULL ){
-    
+                      lfcThreshold = 0, 
+                      padj_val = NULL,
+                      pvalue = NULL,
+                      log2FC = NULL, 
+                      maxExp = NULL, 
+                      maxMedian = NULL, 
+                      maxMin = NULL, 
+                      wilcox.p = NULL, 
+                      minMaxDiff = NULL,
+                      expression_cutoff=NULL, 
+                      normalized.counts=NULL){
+    lfcThreshold <- lfcThreshold
     if(is.null(all.res.tables)){
-        res <- getresGeneTable(dds= dds, contrast = c('group',group1, group2), compare.groups = c(group1, group2))
+        res <- getresGeneTable(dds= dds, 
+                               contrast = c('group',group1, group2), 
+                               compare.groups = c(group1, group2), 
+                               lfcThreshold = lfcThreshold
+                               )
     }else{
         
         res <- all.res.tables[[paste0(group1, "_vs_", group2)]]
+    
+        }
+    
+    
+    #### !!!!!!!!!!!!! if, else state should be covered with  parenthesis #####
+    
+    filter_idx <-  res$gene_id > 0 & 
+        ( if(!is.null(pvalue)){res$pvalue < pvalue} else{TRUE} ) &
+        ( if(!is.null(padj_val)){res$padj < padj_val} else{TRUE} ) & 
+        ( if(!is.null(log2FC)){(abs(res$log2FoldChange) > log2FC) } else{TRUE} ) &
+        ( if(!is.null(maxExp)){res$maxExp > maxExp} else{TRUE}  ) &
+        ( if(!is.null(maxMedian)){res$maxMedian > maxMedian} else{TRUE}  )&
+        ( if(!is.null(maxMin)){res$maxMin > maxMin} else{TRUE} ) & 
+        ( if(!is.null(wilcox.p)){res$wilcox.p < wilcox.p} else{TRUE} ) &
+        ( if(!is.null(minMaxDiff)){(res$maxMin * minMaxDiff > res$maxExp)} else{TRUE} )
+   
+    
+    # NA exist for pvalue, wilcox.p, or padj.... change to FALSE 
+    filter_idx[is.na(filter_idx)] <- FALSE
+    
+    sig <- res[ filter_idx,] %>% arrange(padj)
+    
+    if(!is.null(expression_cutoff)){
+        passed.gene_id <- getExpressionCutoffGenes(select_groups = c(group1, group2), 
+                                                   cutoff = expression_cutoff, 
+                                                   normalized.counts = normalized.counts)
+        sig <- sig %>% dplyr::filter(gene_id %in% passed.gene_id)
+        
     }
     
-    sig <- res[res$padj < padj_val & 
-                   abs(res$log2FoldChange) > log2FC & 
-                   res$maxExp > maxExp &
-                   res$maxMedian > maxMedian &
-                   res$maxMin > maxMin & 
-                   res$wilcox.p < wilcox.p  &
-                   (res$maxMin * minMaxDiff > res$maxExp)
-        , ] %>% 
-        arrange(padj)
-    if(!is.null(expression_cutoff)){
-        passed.gene_id <- getExpressionCutoffGenes(select_groups = c(group1, group2), cutoff = expression_cutoff)
-        sig <- sig %>% dplyr::filter(gene_id %in% passed.gene_id)
-        print(nrow(sig))
-    }
-
+    print(nrow(sig))
     return(sig)
     
 }
 
+getExpressionCutoffGenes <- function(select_groups, cutoff = 0.5, normalized.counts = normalized.counts){
+    
+    sample_ids <- meta.data %>% filter(group %in% select_groups) %>% dplyr::select(sample_id, group)
+    
+    normalized.counts.cut <- normalized.counts %>% 
+        dplyr::select(gene_id, all_of(sample_ids$sample_id)) %>% 
+        group_by(gene_id) %>% 
+        pivot_longer(cols = -c(gene_id), names_to = 'sample_id',values_to = 'counts') %>% 
+        left_join(sample_ids[,c("sample_id", "group")]) %>% ungroup() %>% group_by(group, gene_id) %>% 
+        summarise(median_counts = median(counts)) %>% ungroup() %>% group_by(group) %>% 
+        mutate( median_cut = ifelse( median_counts >= quantile(median_counts, probs = cutoff), TRUE, FALSE)) %>% 
+        dplyr::select(-median_counts) %>% 
+        ungroup() %>% filter(median_cut == TRUE) %>% distinct(gene_id) %>% pull(gene_id)
+    
+    return(normalized.counts.cut)
+    
+}
+
+
 getAllSigGeneTables <- function(combination_table = all.combination, 
-                                dds = dds.all.clean,
+                                dds = dds,
                                 all.res.tables = all.res.tables,
-                                log2FoldChange = 1,
+                                lfcThreshold = 0,
+                                log2FoldChange = NULL,
                                 expression_cutoff = NULL,
-                                padj = 0.1, 
-                                maxExp = 10, 
-                                maxMedian = 20, 
-                                maxMin = 10, 
-                                wilcox.p = 0.4, 
-                                minMaxDiff = 5){
+                                pvalue = NULL,
+                                padj = NULL, 
+                                maxExp = NULL, 
+                                maxMedian = NULL, 
+                                maxMin = NULL, 
+                                wilcox.p = NULL, 
+                                minMaxDiff = NULL, 
+                                normalized.counts = normalized.counts){
     # combination_table : group1, group2, compare ( group1_vs_group2)
     
     all.combination.sig.tables <- list()
 
     
     for(i in 1:nrow(combination_table)){
-        cat(paste0(i, '/',nrow(combination_table),' ',all.combination$compare[i]), sep = '\n')
+        cat(paste0(i, '/',nrow(combination_table),' ',combination_table$compare[i]), sep = '\n')
         
         suppressMessages(expr = { 
             all.combination.sig.tables[[combination_table$compare[i]]] <- 
-                group.dge(dds = dds,
+                getGroupDEGs(dds = dds,
                           group1 = combination_table$group1[i], 
                           group2 = combination_table$group2[i],
                           all.res.tables = all.res.tables,
+                          lfcThreshold = lfcThreshold,
                           log2FC =   log2FoldChange,
+                          pvalue = pvalue, 
                           padj_val =   padj,                                 
                           maxExp = maxExp, 
                           maxMedian = maxMedian, 
                           maxMin = maxMin, 
                           wilcox.p = wilcox.p, 
                           minMaxDiff = minMaxDiff,
-                          expression_cutoff = expression_cutoff)
+                          expression_cutoff = expression_cutoff, 
+                          normalized.counts = normalized.counts)
         })
     }
 
@@ -136,31 +234,42 @@ getAllSigGeneTables <- function(combination_table = all.combination,
 }
 
 
-getAllResGeneTables <- function(combination_table = all.combination,
-                                dds = dds.all.clean,
-                                expression_cutoff = NULL){
-    # combination_table : group1, group2, compare ( group1_vs_group2)
+# DEG Statistics 
+
+dge.stat <- function(x, compare){
     
-    all.combination.res.tables <- list()
+    if(is.character(x)) {x <- get(x) }
     
-    for(i in 1:nrow(combination_table)){
-        cat(paste0(i, '/',nrow(combination_table),' ',all.combination$compare[i]), sep = '\n')
-        
-        suppressMessages(expr = { 
-            all.combination.res.tables[[combination_table$compare[i]]] <- 
-                getresGeneTable(dds = dds, 
-                                contrast = c("group", combination_table$group1[i], combination_table$group2[i]), 
-                                compare.groups = c(combination_table$group1[i],combination_table$group2[i] ), alpha = 0.1)
-        })
-        
-    }
     
-    return(all.combination.res.tables)
+    up <- nrow(x %>% filter( log2FoldChange > 0))
+    down <- nrow(x %>% filter( log2FoldChange < 0))
+    
+    return(data.frame(
+        Compare = compare, 
+        ALL = up + down,
+        UP = up, DOWN = down))
 }
 
 
+deg.updn.list.stats <- function(lst, combination.table = compare.combination){
+    
+    
+    stats <- sapply(lst, nrow)
+    compare.stat.df <- tibble(  compare_group = names(lst), 
+                                stats = stats)
+    compare.stat.df <- compare.stat.df %>% mutate(compare = gsub(pattern = '_UP$|_DN$', replacement = '', x = compare_group), 
+                                                  direction = ifelse(grepl(pattern = 'UP$', x= compare_group), 'UP','DN'))
+    compare.stat.df <- compare.stat.df %>% dplyr::select(compare, direction, stats) %>% 
+        pivot_wider(id_cols = compare, names_from = 'direction', values_from = 'stats')
+   
+    return(compare.stat.df)
+    
+}
 
-group.specific.venn <- function(combination = all.combination, 
+#### Venn Diagram Compare ####
+
+
+group.specific.venn <- function(combination = compare.combination, 
                                 combination.tables.list = all.combination.sig.tables ,
                                 group, 
                                 others,
@@ -239,70 +348,7 @@ group.specific.venn <- function(combination = all.combination,
 }
 
 
-getExpressionCutoffGenes <- function(select_groups, cutoff = 0.5){
-    
-    sample_ids <- meta.data %>% filter(group %in% select_groups) %>% dplyr::select(sample_id, group)
-    
-    normalized.counts.cut <- normalized.counts.unclean %>% 
-        select(gene_id, SYMBOL, all_of(sample_ids$sample_id)) %>% 
-        group_by(gene_id,SYMBOL) %>% 
-        pivot_longer(cols = -c(SYMBOL,gene_id), names_to = 'sample_id',values_to = 'counts') %>% 
-        left_join(sample_ids[,c("sample_id", "group")]) %>% ungroup() %>% group_by(group, gene_id, SYMBOL) %>% 
-        summarise(median_counts = median(counts)) %>% ungroup() %>% group_by(group) %>% 
-        mutate( median_cut = ifelse( median_counts > quantile(median_counts, probs = cutoff), TRUE, FALSE)) %>% 
-        select(-median_counts) %>% 
-        ungroup() %>% filter(median_cut == TRUE) %>% distinct(gene_id) %>% pull(gene_id)
-    
-    return(normalized.counts.cut)
-    
-    
-}
 
-
-# DEG Statistics 
-
-dge.stat <- function(x, compare){
-    
-    if(is.character(x)) {x <- get(x) }
-    
-    
-    up <- nrow(x %>% filter( log2FoldChange > 0))
-    down <- nrow(x %>% filter( log2FoldChange < 0))
-    
-    return(data.frame(
-        Compare = compare, 
-        ALL = up + down,
-        UP = up, DOWN = down))
-}
-
-
-
-dge.stat.cutoff <- function(x, cutoff = c('Antrum_Ctrl_GF','Antrum_Ctrl_SPF')){
-    
-    if(is.character(x)) {x <- get(x) }
-    
-    cutoff_genes <- normalized.counts.median.cut %>% dplyr::select(gene_id, {{cutoff}}) %>% 
-        filter(.[[cutoff[1]]] == TRUE | .[[cutoff[2]]] == TRUE) %>% distinct(gene_id) %>% pull(gene_id)
-    
-    up <- nrow(x %>% filter( log2FoldChange > 0 & gene_id %in% cutoff_genes))
-    down <- nrow(x %>% filter( log2FoldChange < 0 & gene_id %in% cutoff_genes))
-    
-    return(data.frame(
-        Compare = paste0(cutoff[1], ' VS ',cutoff[2]), 
-        UP = up, DOWN = down))
-}
-
-dge.cut <- function(x, cutoff = c('Antrum_Ctrl_GF','Antrum_Ctrl_SPF')){
-    
-    if(is.character(x)) {x <- get(x) }
-    
-    cutoff_genes <- normalized.counts.median.cut %>% dplyr::select(gene_id, {{cutoff}}) %>% 
-        filter(.[[cutoff[1]]] == TRUE | .[[cutoff[2]]] == TRUE) %>% distinct(gene_id) %>% pull(gene_id)
-    
-    df <- x %>% dplyr::filter(gene_id %in% cutoff_genes)
-    
-    return(df)
-}
 
 VennToTable <- function(lst, table, id.gene = as.character(paste0(1:length(lst), collapse = ''))){
     
@@ -317,15 +363,16 @@ VennToTable <- function(lst, table, id.gene = as.character(paste0(1:length(lst),
 }
 
 
-ggVennFromTable <- function(list, 
-                            category.names =  paste0(" vs ",names(list) ),
+ggVennFromTable <- function(lst, 
+                            category.names =  names(lst),
                             title = "Venn", 
                             expand.x = 0.2, 
                             col = 'blue'){
     
-    ggVennDiagram(x = lapply(list, `[[`, 'gene_id') , 
-                  category.names = category.names)   + 
+    ggVennDiagram(x = lapply(lst, `[[`, 'gene_id') , 
+                  category.names = category.names, set_color = "black")   + 
         scale_x_continuous(expand = expansion(expand.x)) + 
+        scale_color_manual(values = rep('black', length(lst))) +
         ggsci::scale_fill_material(col) + 
         theme(legend.position = "none") + 
         ggtitle(title)
@@ -334,29 +381,29 @@ ggVennFromTable <- function(list,
 
 
 getMaxMedian <- function(compare.groups){
-    compare.groups.samples <- meta.data %>% filter(group %in% compare.groups) %>% select(sample_id, group)
-    maxMedian <- normalized.counts.unclean %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
+    compare.groups.samples <- meta.data %>% filter(group %in% compare.groups) %>% dplyr::select(sample_id, group)
+    maxMedian <- normalized.counts %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
                                                             names_to = 'sample_id', 
                                                             values_to = 'normalized_counts') %>% 
         inner_join(compare.groups.samples) %>%  
         group_by(gene_id,SYMBOL, group) %>% 
         summarise(median_counts = median(normalized_counts)) %>% 
         summarise(maxMedian = max(median_counts)) %>%
-        ungroup() %>% select(gene_id, maxMedian)
+        ungroup() %>% dplyr::select(gene_id, maxMedian)
     
     return(maxMedian)
 } 
 
 getMaxMin <- function(compare.groups){
-    compare.groups.samples <- meta.data %>% filter(group %in% compare.groups) %>% select(sample_id, group)
-    maxMin <- normalized.counts.unclean %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
+    compare.groups.samples <- meta.data %>% filter(group %in% compare.groups) %>% dplyr::select(sample_id, group)
+    maxMin <- normalized.counts %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
                                                          names_to = 'sample_id', 
                                                          values_to = 'normalized_counts') %>% 
         inner_join(compare.groups.samples) %>%  
         group_by(gene_id,SYMBOL, group) %>% 
         summarise(min_counts = min(normalized_counts)) %>% 
         summarise(maxMin = max(min_counts)) %>%
-        ungroup() %>% select(gene_id, maxMin)
+        ungroup() %>% dplyr::select(gene_id, maxMin)
     
     return(maxMin)
 } 
@@ -364,21 +411,65 @@ getMaxMin <- function(compare.groups){
 
 getWilcox <- function(compare.groups){
     
-    # Wilcox p calculation using all samples ( include pancreatic dirty samples )
+    # Wilcox p calculation using all samples
     
     compare.groups.samples <- meta.data %>% 
-        filter(group %in% compare.groups) %>% 
-        select(sample_id, group)
-    wilcox.p <- normalized.counts.unclean %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
+        dplyr::filter(group %in% compare.groups) %>% 
+        dplyr::select(sample_id, group)
+    wilcox.p <- normalized.counts %>% pivot_longer(cols = -c('gene_id','SYMBOL'), 
                                                            names_to = 'sample_id', 
-                                                           values_to = 'normalized_counts') %>% 
+                                                           values_to = 'normalized.counts') %>% 
         inner_join(compare.groups.samples) %>%  
-        group_by(gene_id,SYMBOL) %>% 
-        summarise(wilcox.p = wilcox.test(normalized_counts ~ group, paired = FALSE)$p.value) %>% 
-        ungroup() %>% select(gene_id, wilcox.p) 
+        dplyr::group_by(gene_id,SYMBOL) %>% 
+        dplyr::summarise(wilcox.p = wilcox.test(formula = normalized.counts ~ group, paired = FALSE)$p.value) %>% 
+        ungroup() %>% dplyr::select(gene_id, wilcox.p) 
     
     return(wilcox.p)
 } 
+
+
+
+restoSigNcuts <- function(list, Ncutoff = 300){
+    
+    sigList = list()
+    
+    for(i in 1:length(list)){
+        
+        t <- list[[i]]
+        up_name <- paste0(names(list)[i], "_UP")
+        dn_name <- paste0(names(list)[i], "_DN")
+        pass_geneid = normalized.counts.q1.cut %>%  
+            filter(.[[all.combination$group1[i]]] == TRUE | .[[all.combination$group2[i]]] == TRUE) %>% pull(gene_id)
+        sigList[[up_name]] <- t %>% filter(log2FoldChange > 0 & gene_id %in% pass_geneid) %>% slice_head(n= Ncutoff)
+        sigList[[dn_name]] <- t %>% filter(log2FoldChange < 0 & gene_id %in% pass_geneid) %>% slice_head(n= Ncutoff)
+        
+        
+    }
+    
+    return(sigList)
+}
+
+
+ResTablesToUpDown <- function(list){
+    
+    sigList = list()
+    
+    for(i in 1:length(list)){
+        
+        t <- list[[i]]
+        up_name <- paste0(names(list)[i], "_UP")
+        dn_name <- paste0(names(list)[i], "_DN")
+        
+        sigList[[up_name]] <- t %>% filter(log2FoldChange > 0)
+        sigList[[dn_name]] <- t %>% filter(log2FoldChange < 0) 
+        
+        
+    }
+    
+    return(sigList)
+}
+
+
 
 
 
