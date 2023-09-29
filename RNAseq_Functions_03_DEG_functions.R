@@ -70,7 +70,7 @@ getAllResGeneTables <- function(combination_table = compare.combination,
     all.combination.res.tables <- list()
     
     for(i in 1:nrow(combination_table)){
-        cat(paste0(combination_table$compare[i], ' ', i, '/',nrow(combination_table),' ',all.combination$compare[i]), sep = '\n')
+        cat(paste0(combination_table$compare[i], ' ', i, '/',nrow(combination_table),' ',combination_table$compare[i]), sep = '\n')
         
         suppressMessages(expr = { 
             all.combination.res.tables[[combination_table$compare[i]]] <- 

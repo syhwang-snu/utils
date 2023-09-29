@@ -13,9 +13,9 @@ genePlot <- function(symbol=NULL,
                      force_zero = TRUE, 
                      x.angle = 90, 
                      meta.data = meta.data, 
-                     color = NULL, 
-                     alpha = NULL, 
-                     barplot = FALSE)
+                     color = 'treat', 
+                     alpha = 'strain', 
+                     barplot = FALSE, gc.label = TRUE)
     {
     
     if(is.null(gene_id)){
@@ -52,15 +52,17 @@ genePlot <- function(symbol=NULL,
     p <- ggboxplot(geneCounts, x = "group", y = "count", 
                    add = "jitter", 
                    title = title, subtitle = subtitle,
-                   # color = color, 
-                   # fill = color,
-                   # alpha = alpha,
+                    color = color, 
+                    fill = color,
+                    alpha = alpha,
                    palette = 'lancet',
                    ylab = "Normalized Counts",
                    width = 0.7, 
                    lwd = 0.5, 
                    fatten = 0.8) + 
         scale_alpha_manual(values = c(0,0.2)) +
+        scale_color_manual(values = c('black','red','blue')) + 
+        scale_fill_manual(values = c('black','red','blue')) + 
         theme(title = element_text(size=20, face='bold'), 
               plot.subtitle = element_text(size = 12,face='bold'),
               axis.title.x = element_blank(),
@@ -68,6 +70,25 @@ genePlot <- function(symbol=NULL,
               axis.text.y = element_text(size = 18, face='bold'), 
               axis.title.y = element_text(size = 18, face='bold'),
               legend.position = 'none') 
+    # https://stackoverflow.com/questions/15887461/remove-empty-factors-from-clustered-bargraph-in-ggplot2-with-multiple-facets
+    
+    if(gc.label){
+        
+        treat.labs <- c("Ctrl", "H.felis",'MNU')
+        names(treat.labs) <- c("Ctrl", "Felis","MNU")
+        
+        p <- p + facet_nested(. ~ location + treat + week , 
+                              scales = "free", 
+                              space='free', 
+                              switch = 'x' , labeller = labeller(treat = treat.labs)) + 
+            scale_x_discrete(labels=c('SPF','GF')) +
+            theme(panel.spacing=unit(0,"lines"), 
+                  panel.border=element_rect(color="grey50", fill = 'transparent'), 
+                  strip.text.x = element_text(size = 15, face = 'bold'))
+    
+
+        }
+    
     
     if(barplot){
         

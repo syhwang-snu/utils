@@ -321,12 +321,14 @@ pathways_to_df <- function(enrichresult){
                 df$bg_count <- as.numeric(gsub(x=df$BgRatio,pattern = "^.*/",replacement = ""))
                 df$DEG_count <- as.numeric(gsub(x=df$GeneRatio, pattern = "^.*/", replacement = ""))
                 
+                df$GeneRatio_nominal <- df$GeneRatio
                 df$GeneRatio <- sapply(df$GeneRatio, function(txt) eval(parse(text=txt)))
                 
                 df$Description <- gsub(x = df$Description, pattern = "_", replacement = " ") 
                 df$Description <- gsub(x = df$Description, pattern = " - Mus musculus \\(house mouse\\)", replacement = "") 
                 df$Database <- names(enrichresult)[i]
-                df <- df %>% dplyr::select(Database, ID, Description, Count, geneset_count, DEG_count, bg_count, everything())
+                df <- df %>% dplyr::select(Database, ID, Description, Count, geneset_count, 
+                                           DEG_count, bg_count, GeneRatio_nominal, everything())
                 resultframe_list[[names(enrichresult[i])]] <- df
             }
         }
@@ -352,7 +354,8 @@ getAllGSEA <- function(geneList,
     
     geneList <- geneList %>% arrange(desc(log2FoldChange))
     
-    entrez <- geneList %>% filter(!is.na(entrez)) %>% pull(log2FoldChange,entrez)
+    entrez <- geneList %>% filter(!is.na(entrez)) %>% pull(entrez,log2FoldChange)
+    print(head(entrez))
     
     if(!exists('all.entrez.id')){
         message('...no all entrez id')
@@ -365,7 +368,7 @@ getAllGSEA <- function(geneList,
     
     try(expr = {
         
-        pathways[['GO BP']] <- GSEA(geneList = geneList %>% pull(log2FoldChange,entrez),
+        pathways[['GO BP']] <- GSEA(geneList = entrez,
                                     TERM2GENE = mouse.GOBP.term2gene,
                                     TERM2NAME = mouse.GOBP.term2name,
                                     pvalueCutoff = pvalcutoff, 
@@ -385,7 +388,7 @@ getAllGSEA <- function(geneList,
         cat('GO CC enrichment analysis...\n')
         try(expr = {
             
-            pathways[['GO CC']] <- GSEA(geneList = geneList %>% pull(log2FoldChange,entrez),
+            pathways[['GO CC']] <- GSEA(geneList = entrez,
                                         TERM2GENE = mouse.GOCC.term2gene,
                                         TERM2NAME = mouse.GOCC.term2name,
                                         pvalueCutoff = pvalcutoff, 
@@ -402,7 +405,7 @@ getAllGSEA <- function(geneList,
         cat('GO MF enrichment analysis...\n')
         try(expr = {
             
-            pathways[['GO MF']] <- GSEA(geneList = geneList %>% pull(log2FoldChange,entrez),
+            pathways[['GO MF']] <- GSEA(geneList = entrez,
                                         TERM2GENE = mouse.GOMF.term2gene,
                                         TERM2NAME = mouse.GOMF.term2name,
                                         pvalueCutoff = pvalcutoff, 
