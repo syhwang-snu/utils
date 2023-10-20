@@ -593,7 +593,6 @@ gsea_to_df <- function(enrichresult){
     
 }
 
-enrichBarPlot(ex.enrichallpw, annotation = F)
 
 enrichBarPlot <- function(enrich.df,
                           database = 'GO BP',
