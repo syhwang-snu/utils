@@ -1,34 +1,38 @@
-library(msigdbr)
-library(glue)
-library(ReactomePA)
 
+#
+# UPDATE in 2023-10-19 : using mouse/human pathway both .... 
+
+
+
+library(glue)
 library(clusterProfiler)
 library(enrichplot)
-library(GOSemSim)
-library(DOSE)
-library(ReactomePA)
-library(org.Mm.eg.db)
-library(ggsci)
-library(clipr)
-library(glue)
+library(tidyverse)
+library(data.table)
 
 
-mouse.GOBP.term2gene <- readRDS('./Data/GO_230611/mouse.GOBP.term2gene.RDS')
-mouse.GOBP.term2name <- readRDS('./Data/GO_230611/mouse.GOBP.term2name.RDS')
-mouse.GOCC.term2gene <- readRDS('./Data/GO_230611/mouse.GOCC.term2gene.RDS')
-mouse.GOCC.term2name <- readRDS('./Data/GO_230611/mouse.GOCC.term2name.RDS')
-mouse.GOMF.term2gene <- readRDS('./Data/GO_230611/mouse.GOMF.term2gene.RDS')
-mouse.GOMF.term2name <- readRDS('./Data/GO_230611/mouse.GOMF.term2name.RDS')
+pathway.version <- 'E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202310'
 
-m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% 
-    dplyr::select(gs_name, entrez_gene)
+message(glue('Pathway version : {pathway.version}'))
 
-all.entrez.id <- as.character(unique(all.res.tables[[1]]$entrez))
+pwfiles <- list.files(pattern = "term.*\\.RDS$")
+pwnames <- gsub(pwfiles, replacement = '',pattern = '\\.RDS$')
+pwlist <- list()
+for(i in 1:length(pwfiles)){
+    pwlist[[pwnames[i]]] <- readRDS(file = pwfiles[i])
+}
 
+pwlist.human <- pwlist[grepl(names(pwlist), pattern = '^human') ]
+pwlist.mouse <- pwlist[grepl(names(pwlist), pattern = '^mouse') ]
 
-getAllenrichPathways <- function(symbols, 
-                                 qvalcutoff = 1, 
+gene.annotation <- readRDS(file.path(pathway.version, 'gene.annotation.RDS'))
+
+all.entrez.id <- unique(gene.annotation$entrez)
+
+getAllenrichPathways <- function(symbols=NULL, entrez=NULL, 
+                                 pwlist = pwlist.human,
                                  pvalcutoff = 0.1, 
+                                 GO.Evidence.IEA = TRUE,
                                  addGeneFoldChange=TRUE, 
                                  fc_data = NULL,
                                  gene.annotation = gene.annotation,
@@ -36,36 +40,44 @@ getAllenrichPathways <- function(symbols,
                                  GO_CC_MF = TRUE,
                                  only.go.kegg = TRUE, 
                                  simplify = TRUE, 
-                                 make2df = FALSE ){
+                                 make2df = TRUE ){
     
     pathways <- list()
     
-    entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
-    
     if(!exists('all.entrez.id')){
-        message('...no all entrez id')
-        return('')
-        
-    }
+        message('...no all entrez id'); return('')}
     
     if(addGeneFoldChange == TRUE){
-        if(is.null(fc_data)){ 
-            message("...add fold change data ...") 
-            return('')
+        if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
+    
+    message(glue('Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
+    
+    if(is.null(entrez)){
+        message("Convert Symbol To Entrez ID...")
+        entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
         }
-        
+
+    names(pwlist) <- gsub(x = names(pwlist), pattern = '^(human|mouse)\\.', replacement = '')
+    
+    if(!GO.Evidence.IEA){
+        go.pways <- grep(names(pwlist) , pattern = 'GO.*\\.term2gene')
+        pwlist[go.pways] <- sapply(pwlist[go.pways], 
+                                   FUN = function(x){x <- x[x$Evidence != 'IEA',]},
+                                   simplify = F, USE.NAMES = F)
     }
     
-    cat('GO BP enrichment analysis...\n')
+    
+    
+    message('GO BP enrichment analysis...\n')
     
     try(expr = {
         
         pathways[['GO BP']] <- enricher(gene = entrez, 
-                                        TERM2GENE = mouse.GOBP.term2gene, 
-                                        TERM2NAME = mouse.GOBP.term2name,
+                                        TERM2GENE = pwlist$GOBP.term2gene, 
+                                        TERM2NAME = pwlist$GOBP.term2name,
                                         pvalueCutoff = pvalcutoff,
-                                        qvalueCutoff = qvalcutoff,
-                                        minGSSize = 5,
+                                        qvalueCutoff = 1,
+                                        minGSSize = 0,
                                         maxGSSize = Inf,
                                         pAdjustMethod = "BH", 
                                         universe = all.entrez.id
@@ -80,15 +92,15 @@ getAllenrichPathways <- function(symbols,
     
     if(GO_CC_MF == TRUE){
         
-        cat('GO CC enrichment analysis...\n')
+        message('GO CC enrichment analysis...\n')
         try(expr = {
             
             pathways[['GO CC']] <- enricher(gene = entrez, 
-                                            TERM2GENE = mouse.GOCC.term2gene, 
-                                            TERM2NAME = mouse.GOCC.term2name,
+                                            TERM2GENE = pwlist$GOCC.term2gene, 
+                                            TERM2NAME = pwlist$GOCC.term2name,
                                             pvalueCutoff = pvalcutoff,
-                                            qvalueCutoff = qvalcutoff,
-                                            minGSSize = 5,
+                                            qvalueCutoff = 1,
+                                            minGSSize = 0,
                                             maxGSSize = Inf,
                                             pAdjustMethod = "BH",
                                             universe = all.entrez.id
@@ -101,19 +113,19 @@ getAllenrichPathways <- function(symbols,
             
         })
         
-        cat('GO MF enrichment analysis...\n')
+        message('GO MF enrichment analysis...\n')
         try(expr = {
             
             pathways[['GO MF']] <- enricher(gene = entrez, 
-                                            TERM2GENE = mouse.GOMF.term2gene, 
-                                            TERM2NAME = mouse.GOMF.term2name,
+                                            TERM2GENE = pwlist$GOMF.term2gene, 
+                                            TERM2NAME = pwlist$GOMF.term2name,
                                             pvalueCutoff = pvalcutoff,
-                                            qvalueCutoff = qvalcutoff,
-                                            minGSSize = 5,
+                                            qvalueCutoff = 1,
+                                            minGSSize = 0,
                                             maxGSSize = Inf,
                                             pAdjustMethod = "BH",
                                             universe = all.entrez.id
-            )
+                                            )
             pathways[['GO MF']] <- setentrezToSymbol(pathways[['GO MF']], gene.annotation = gene.annotation)
             
             if(simplify){
@@ -124,17 +136,19 @@ getAllenrichPathways <- function(symbols,
         
     }
     
-    cat('KEGG enrichment analysis...\n')
+    message('KEGG enrichment analysis...\n')
     try(expr = {
-        pathways[['KEGG']] <- enrichKEGG(gene = entrez, 
-                                         organism = "mmu",
-                                         universe = all.entrez.id,
-                                         qvalueCutoff = qvalcutoff ,
-                                         pvalueCutoff =  pvalcutoff,
-                                         minGSSize = 5,
-                                         maxGSSize = Inf,
-                                         pAdjustMethod = "BH" 
-        )
+        pathways[['KEGG']] <- enricher(gene = entrez, 
+                                       TERM2GENE = pwlist$KEGG.term2gene, 
+                                       TERM2NAME = pwlist$KEGG.term2name,
+                                       pvalueCutoff = pvalcutoff,
+                                       qvalueCutoff = 1,
+                                       minGSSize = 0,
+                                       maxGSSize = Inf,
+                                       pAdjustMethod = "BH",
+                                       universe = all.entrez.id
+                                       )
+        
         pathways[['KEGG']] <- setentrezToSymbol(pathways[['KEGG']], gene.annotation = gene.annotation)
         
     })
@@ -142,61 +156,64 @@ getAllenrichPathways <- function(symbols,
     
     if(only.go.kegg ==FALSE){
         try(expr = {
-            cat('KEGG Module enrichment analysis...\n')
-            pathways[['KEGG.M']] <- enrichMKEGG(gene = entrez, 
-                                                organism = "mmu",
-                                                universe = all.entrez.id,
-                                                qvalueCutoff = qvalcutoff,
-                                                pvalueCutoff =  pvalcutoff,
-                                                minGSSize = 5,
-                                                maxGSSize = Inf,
-                                                pAdjustMethod = "BH"
-            )
+            message('KEGG Module enrichment analysis...\n')
+            pathways[['KEGG.M']] <- enricher(gene = entrez, 
+                                             TERM2GENE = pwlist$MKEGG.term2gene, 
+                                             TERM2NAME = pwlist$MKEGG.term2name,
+                                             pvalueCutoff = pvalcutoff,
+                                             qvalueCutoff = 1,
+                                             minGSSize = 0,
+                                             maxGSSize = Inf,
+                                             pAdjustMethod = "BH",
+                                             universe = all.entrez.id
+                                            )
             pathways[['KEGG.M']] <- setentrezToSymbol(pathways[['KEGG.M']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat('WikiPathway enrichment analysis...\n')
-            pathways[['WikiPathways']] <- enrichWP(gene = entrez,
-                                                   organism = "Mus musculus",
-                                                   universe = all.entrez.id,
+            pathways[['WikiPathways']] <- enricher(gene = entrez, 
+                                                   TERM2GENE = pwlist$wp.term2gene, 
+                                                   TERM2NAME = pwlist$wp.term2name,
                                                    pvalueCutoff = pvalcutoff,
-                                                   qvalueCutoff = qvalcutoff,
-                                                   minGSSize = 5,
+                                                   qvalueCutoff = 1,
+                                                   minGSSize = 0,
                                                    maxGSSize = Inf,
-                                                   pAdjustMethod = "BH" 
-            )
+                                                   pAdjustMethod = "BH",
+                                                   universe = all.entrez.id
+                                            )
             pathways[['WikiPathways']] <- setentrezToSymbol(pathways[['WikiPathways']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat('Reactome enrichment analysis...\n')
-            pathways[['Reactome']] <- enrichPathway(gene = entrez, 
-                                                    organism = "mouse",
-                                                    universe = all.entrez.id,
-                                                    pvalueCutoff = pvalcutoff,
-                                                    qvalueCutoff = qvalcutoff,
-                                                    minGSSize = 5,
-                                                    maxGSSize = Inf,
-                                                    pAdjustMethod = "BH"
-            )
+            pathways[['Reactome']] <- enricher(gene = entrez, 
+                                               TERM2GENE = pwlist$reactome.term2gene, 
+                                               TERM2NAME = pwlist$reactome.term2name,
+                                               pvalueCutoff = pvalcutoff,
+                                               qvalueCutoff = 1,
+                                               minGSSize = 0,
+                                               maxGSSize = Inf,
+                                               pAdjustMethod = "BH",
+                                               universe = all.entrez.id
+                                            )
             pathways[['Reactome']] <- setentrezToSymbol(pathways[['Reactome']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat("MsigDB Hallmark enrichment analysis...\n")
-            pathways[['MsigHall']] <- enricher(gene = entrez,
-                                               universe = all.entrez.id,
+            pathways[['MsigHall']] <- enricher(gene = entrez, 
+                                               TERM2GENE = pwlist$hallmark.term2gene, 
                                                pvalueCutoff = pvalcutoff,
-                                               qvalueCutoff = qvalcutoff, 
-                                               minGSSize = 5,
+                                               qvalueCutoff = 1,
+                                               minGSSize = 0,
                                                maxGSSize = Inf,
-                                               TERM2GENE = m_t2g
-                                               
-            )
+                                               pAdjustMethod = "BH",
+                                               universe = all.entrez.id
+                                            )
             pathways[['MsigHall']] <- setentrezToSymbol(pathways[['MsigHall']], gene.annotation = gene.annotation)
         })
     }
@@ -218,14 +235,18 @@ getAllenrichPathways <- function(symbols,
         for(i in 1:length(modules)){
             try(expr = {
                 pathways[[modules[i]]] <- simplifyByTopGenes(pathways[[modules[i]]])
-                message(glue('{modules[i]} simplified '))
+                message(glue('{modules[i]} simplified by Top Genes'))
             })
         }
     }
-    print(cat(glue('{paste0(modules, collapse =",")} loaded\\n')))
+    
+    print(cat(glue('{paste0(modules, collapse =", ")} loaded\\n')))
     
     if(make2df == TRUE){
+        
+        message(glue('Pathways To DataFrame'))
         pathways <- pathways_to_df(pathways)
+    
     }
     
     return(pathways)
@@ -241,6 +262,7 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation){
         break
     }
     message(' set entrez ID to gene symbol using gene annotation file')
+    
     for(i in 1:length(x$geneID)){
         gs <- stringr::str_split(string = x$geneID[i], pattern = '/')[[1]]
         symbols <- gene.annotation$SYMBOL[gene.annotation$entrez %in% gs]
@@ -252,6 +274,11 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation){
     
 }
 
+
+splitGeneSet <- function(gs){
+    gs <- stringr::str_split(string = gs, pattern = '/')[[1]]
+    return(gs)
+}
 
 addGeneFoldChange <- function(enrichresult, fc_data = top_genes_filt, top_genes = 10){
     # add gene fold change data to GO Enrichment analysis result. 
@@ -321,14 +348,14 @@ pathways_to_df <- function(enrichresult){
                 df$bg_count <- as.numeric(gsub(x=df$BgRatio,pattern = "^.*/",replacement = ""))
                 df$DEG_count <- as.numeric(gsub(x=df$GeneRatio, pattern = "^.*/", replacement = ""))
                 
-                df$GeneRatio_nominal <- df$GeneRatio
-                df$GeneRatio <- sapply(df$GeneRatio, function(txt) eval(parse(text=txt)))
+                df$GeneRatio <- df$GeneRatio
+                df$GeneRatio_calc <- sapply(df$GeneRatio, function(txt) eval(parse(text=txt)))
                 
                 df$Description <- gsub(x = df$Description, pattern = "_", replacement = " ") 
                 df$Description <- gsub(x = df$Description, pattern = " - Mus musculus \\(house mouse\\)", replacement = "") 
                 df$Database <- names(enrichresult)[i]
                 df <- df %>% dplyr::select(Database, ID, Description, Count, geneset_count, 
-                                           DEG_count, bg_count, GeneRatio_nominal, everything())
+                                           DEG_count, bg_count, GeneRatio, GeneRatio_calc,  everything())
                 resultframe_list[[names(enrichresult[i])]] <- df
             }
         }
@@ -566,6 +593,7 @@ gsea_to_df <- function(enrichresult){
     
 }
 
+enrichBarPlot(ex.enrichallpw, annotation = F)
 
 enrichBarPlot <- function(enrich.df,
                           database = 'GO BP',
@@ -579,7 +607,7 @@ enrichBarPlot <- function(enrich.df,
                           desc= FALSE, 
                           subset = NULL
 ){
-    df <- enrich.df %>% dplyr::filter(Database = all_of(database))
+    df <- enrich.df %>% dplyr::filter(Database == all_of(database))
     
     df$Description <- paste0(df$Count,'/',df$geneset_count, ' ',df$Description)
     total_deg <- unique(df$DEG_count)[1]
@@ -599,6 +627,29 @@ enrichBarPlot <- function(enrich.df,
     if(!is.null(subset)){
         df <- df[subset,]
     }
+    
+    # Draw Gene ratio vs Enrich Term Plot 
+    
+    p <- ggplot(df, aes(x = GeneRatio, y = Description)) +
+        geom_col(fill = 'darkblue', width = 0.8, alpha = alpha) +
+        scale_y_discrete(label = function(x) stringr::str_wrap(x, width = description_width), limits = rev) +
+        scale_x_continuous(expand = expansion(mult = c(0,0.1))) +
+        xlab(xlab) +
+        theme_classic() + 
+        theme(axis.text.y = element_text(face='bold',size=11, color='black'), 
+              axis.title.y = element_blank(),
+              legend.position = 'none') +
+        ggtitle(title)
+    
+    if(annotation == TRUE){
+        tryCatch(expr={ 
+            p <- p + 
+                geom_text(aes(label=stringr::str_wrap(geneID_FC_top_genes, width = annotation_width), x= 0), 
+                          hjust = -0.01, size=4, fontface='bold') 
+        })
+    }
+    p
+    return(p)
     
     
 }
@@ -683,15 +734,23 @@ cluster.path.go.plot <- function(cluster.all, subcluster,
 } 
 
 
-GOtoGeneSet <- function(genesetName, enrichresult, only.topgene = TRUE){
+GOtoGeneSet <- function(goid, goname,
+                        godb = pwlist.mouse$mouse.GOBP.term2gene, 
+                        gonamedb = pwlist.mouse$mouse.GOBP.term2name, 
+                        toSYMBOL = TRUE, 
+                        gene.annotation = gene.annotation ){
     
-    goid <- enrichresult@result %>% filter(Description %in% genesetName) %>% pull(ID)
-    print(goid)
-    geneset <- enrichresult@geneSets[names(enrichresult@geneSets) == goid][[1]]
     
-    if(only.topgene == TRUE){
-        top_genes <- attributes(enrichresult)$top.genes[names(attributes(enrichresult)$top.genes) == goid ][[1]]
-        geneset <- top_genes[top_genes %in% geneset]
+    if(is.null(goid)){
+        goid <-  gonamedb %>% dplyr::filter(name == goname) %>% pull(term) %>% unique()
+    }
+
+    geneset <- godb %>% left_join(gonamedb) %>% filter(term == goid) %>% distinct()
+    
+    if(toSYMBOL){
+        
+        geneset <- geneset %>% dplyr::rename(entrez = gene) %>% 
+            left_join(gene.annotation, by = 'entrez') %>% distinct()
         
     }
     
@@ -713,7 +772,6 @@ get_intersect_pathway <- function(l, anti = FALSE){
         pw_per_samples <- list()
         
         for(j in 1:length(l)){
-            
             pw_per_samples[[names(l)[j]]] <- l[[j]][[i]]
             
         }
@@ -723,32 +781,23 @@ get_intersect_pathway <- function(l, anti = FALSE){
     }
     
     for(i in 1:length(intersect_pw)){
-        
-        
-        
+
         if(anti){
             intersect_pw[[i]] <- purrr::reduce(intersect_pw[[i]], .f = anti_join, 
                                                by = c('ID','Description')
             )
             
         }else{
-            
             colns <- colnames(intersect_pw[[i]][[1]])[-c(1,2)] # make new col names without ID,Description
             colns_w_suffix <- paste(rep(colns, each = length(names(l))), names(l), sep = "_")
             intersect_pw[[i]] <- purrr::reduce(intersect_pw[[i]], .f = inner_join, 
                                                by = c('ID','Description'), 
                                                suffix = paste0('_',names(l))
             )
-            
             intersect_pw[[i]]  <- intersect_pw[[i]] %>% dplyr::select(ID,Description, colns_w_suffix)
-            
-            
         }
-        
-        
+
     }
-    
-    
     return(intersect_pw)
     
 }
