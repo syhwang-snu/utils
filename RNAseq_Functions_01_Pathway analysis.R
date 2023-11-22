@@ -1,7 +1,14 @@
 
+# Pathway analysis functions 
 #
+#
+# UPDATE in 2023-11-21 : modify functions 
+# - set gene.annotation entrez to character
+# - modify setentrezToSymbol , addGeneFoldChange with tidyverse left_join
+# 
 # UPDATE in 2023-10-19 : using mouse/human pathway both .... 
-
+# 
+# 
 
 
 library(glue)
@@ -15,27 +22,39 @@ pathway.version <- 'E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202
 
 message(glue('Pathway version : {pathway.version}'))
 
-pwfiles <- list.files(pattern = "term.*\\.RDS$")
+pwfiles <- list.files(path = pathway.version,pattern = "term.*\\.RDS$")
+pwfiles.path <- list.files(path = pathway.version,pattern = "term.*\\.RDS$", full.names = T)
 pwnames <- gsub(pwfiles, replacement = '',pattern = '\\.RDS$')
 pwlist <- list()
 for(i in 1:length(pwfiles)){
-    pwlist[[pwnames[i]]] <- readRDS(file = pwfiles[i])
+    pwlist[[pwnames[i]]] <- readRDS(file = pwfiles.path[i])
 }
 
 pwlist.human <- pwlist[grepl(names(pwlist), pattern = '^human') ]
 pwlist.mouse <- pwlist[grepl(names(pwlist), pattern = '^mouse') ]
 
-gene.annotation <- readRDS(file.path(pathway.version, 'gene.annotation.RDS'))
+gene.pw.annotation <- readRDS(file.path(pathway.version, 'gene.annotation.RDS'))
+gene.pw.annotation$entrez <- as.character(gene.pw.annotation$entrez)
 
-all.entrez.id <- unique(gene.annotation$entrez)
+gene.pw.annotation.human <- gene.pw.annotation %>% dplyr::filter(tax_id == '9606')
+gene.pw.annotation.mouse <- gene.pw.annotation %>% dplyr::filter(tax_id == '10090')
 
-getAllenrichPathways <- function(symbols=NULL, entrez=NULL, 
+all.entrez.id <- as.character(unique(gene.pw.annotation$entrez))
+
+
+getAllenrichPathways <- function(symbols=NULL, 
+                                 entrez=NULL, 
                                  pwlist = pwlist.human,
-                                 pvalcutoff = 0.1, 
+                                 all.entrez.id = all.entrez.id,
+                                 dds.all.entrez.id = NULL,
+                                 pvalcutoff = 0.2, 
+                                 minCount = 2,
                                  GO.Evidence.IEA = TRUE,
                                  addGeneFoldChange=TRUE, 
                                  fc_data = NULL,
-                                 gene.annotation = gene.annotation,
+                                 minGSSize = 2,
+                                 maxGSSize = Inf,
+                                 gene.pw.annotation = gene.pw.annotation,
                                  simplifyByTopGenes = FALSE, 
                                  GO_CC_MF = TRUE,
                                  only.go.kegg = TRUE, 
@@ -47,6 +66,12 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
     if(!exists('all.entrez.id')){
         message('...no all entrez id'); return('')}
     
+    if(!is.null(dds.all.entrez.id)){
+        message("intersect dds all entrez id & base all entrez id ")
+        all.entrez.id <- intersect(dds.all.entrez.id, all.entrez.id)
+    }
+    
+    
     if(addGeneFoldChange == TRUE){
         if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
     
@@ -54,7 +79,7 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
     
     if(is.null(entrez)){
         message("Convert Symbol To Entrez ID...")
-        entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
+        entrez <- gene.pw.annotation$entrez[gene.pw.annotation$SYMBOL %in% symbols]
         }
 
     names(pwlist) <- gsub(x = names(pwlist), pattern = '^(human|mouse)\\.', replacement = '')
@@ -62,13 +87,12 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
     if(!GO.Evidence.IEA){
         go.pways <- grep(names(pwlist) , pattern = 'GO.*\\.term2gene')
         pwlist[go.pways] <- sapply(pwlist[go.pways], 
-                                   FUN = function(x){x <- x[x$Evidence != 'IEA',]},
+                                   function(x){x <- x[x$Evidence != 'IEA',]},
                                    simplify = F, USE.NAMES = F)
     }
     
     
-    
-    message('GO BP enrichment analysis...\n')
+    cat('GO BP enrichment analysis...\n')
     
     try(expr = {
         
@@ -77,12 +101,16 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                         TERM2NAME = pwlist$GOBP.term2name,
                                         pvalueCutoff = pvalcutoff,
                                         qvalueCutoff = 1,
-                                        minGSSize = 0,
-                                        maxGSSize = Inf,
+                                        minGSSize = minGSSize,
+                                        maxGSSize = maxGSSize,
                                         pAdjustMethod = "BH", 
                                         universe = all.entrez.id
         )
-        pathways[['GO BP']] <- setentrezToSymbol(pathways[['GO BP']], gene.annotation = gene.annotation)
+        
+        pathways[['GO BP']]@result <- pathways[['GO BP']]@result[
+                            which(pathways[['GO BP']]@result$p.adjust < pvalcutoff & 
+                                      pathways[['GO BP']]@result$Count >= minCount), ] 
+        pathways[['GO BP']] <- setentrezToSymbol(pathways[['GO BP']], gene.annotation = gene.pw.annotation)
         
         if(simplify){
             # pathways[['GO BP']] <- simplify(pathways[['GO BP']])
@@ -92,7 +120,7 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
     
     if(GO_CC_MF == TRUE){
         
-        message('GO CC enrichment analysis...\n')
+        cat('GO CC enrichment analysis...\n')
         try(expr = {
             
             pathways[['GO CC']] <- enricher(gene = entrez, 
@@ -100,12 +128,15 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                             TERM2NAME = pwlist$GOCC.term2name,
                                             pvalueCutoff = pvalcutoff,
                                             qvalueCutoff = 1,
-                                            minGSSize = 0,
-                                            maxGSSize = Inf,
+                                            minGSSize = minGSSize,
+                                            maxGSSize = maxGSSize,
                                             pAdjustMethod = "BH",
                                             universe = all.entrez.id
             )
-            pathways[['GO CC']] <- setentrezToSymbol(pathways[['GO CC']], gene.annotation = gene.annotation)
+            pathways[['GO CC']]@result <- pathways[['GO CC']]@result[
+                which(pathways[['GO CC']]@result$p.adjust < pvalcutoff & 
+                          pathways[['GO CC']]@result$Count >= minCount), ] 
+            pathways[['GO CC']] <- setentrezToSymbol(pathways[['GO CC']], gene.annotation = gene.pw.annotation)
             
             if(simplify){
                 #   pathways[['GO CC']] <- simplify(pathways[['GO CC']])
@@ -113,7 +144,7 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
             
         })
         
-        message('GO MF enrichment analysis...\n')
+        cat('GO MF enrichment analysis...\n')
         try(expr = {
             
             pathways[['GO MF']] <- enricher(gene = entrez, 
@@ -121,12 +152,15 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                             TERM2NAME = pwlist$GOMF.term2name,
                                             pvalueCutoff = pvalcutoff,
                                             qvalueCutoff = 1,
-                                            minGSSize = 0,
-                                            maxGSSize = Inf,
+                                            minGSSize = minGSSize,
+                                            maxGSSize = maxGSSize,
                                             pAdjustMethod = "BH",
                                             universe = all.entrez.id
                                             )
-            pathways[['GO MF']] <- setentrezToSymbol(pathways[['GO MF']], gene.annotation = gene.annotation)
+            pathways[['GO MF']]@result <- pathways[['GO MF']]@result[
+                which(pathways[['GO MF']]@result$p.adjust < pvalcutoff & 
+                          pathways[['GO MF']]@result$Count >= minCount), ] 
+            pathways[['GO MF']] <- setentrezToSymbol(pathways[['GO MF']], gene.annotation = gene.pw.annotation)
             
             if(simplify){
                 # pathways[['GO MF']] <- simplify(pathways[['GO MF']])
@@ -136,38 +170,43 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
         
     }
     
-    message('KEGG enrichment analysis...\n')
+    cat('KEGG enrichment analysis...\n')
     try(expr = {
         pathways[['KEGG']] <- enricher(gene = entrez, 
                                        TERM2GENE = pwlist$KEGG.term2gene, 
                                        TERM2NAME = pwlist$KEGG.term2name,
                                        pvalueCutoff = pvalcutoff,
                                        qvalueCutoff = 1,
-                                       minGSSize = 0,
-                                       maxGSSize = Inf,
+                                       minGSSize = minGSSize,
+                                       maxGSSize = maxGSSize,
                                        pAdjustMethod = "BH",
                                        universe = all.entrez.id
                                        )
-        
-        pathways[['KEGG']] <- setentrezToSymbol(pathways[['KEGG']], gene.annotation = gene.annotation)
+        pathways[['KEGG']]@result <- pathways[['KEGG']]@result[
+            which(pathways[['KEGG']]@result$p.adjust < pvalcutoff & 
+                      pathways[['KEGG']]@result$Count >= minCount), ] 
+        pathways[['KEGG']] <- setentrezToSymbol(pathways[['KEGG']], gene.annotation = gene.pw.annotation)
         
     })
     
     
     if(only.go.kegg ==FALSE){
         try(expr = {
-            message('KEGG Module enrichment analysis...\n')
+            cat('KEGG Module enrichment analysis...\n')
             pathways[['KEGG.M']] <- enricher(gene = entrez, 
                                              TERM2GENE = pwlist$MKEGG.term2gene, 
                                              TERM2NAME = pwlist$MKEGG.term2name,
                                              pvalueCutoff = pvalcutoff,
                                              qvalueCutoff = 1,
-                                             minGSSize = 0,
-                                             maxGSSize = Inf,
+                                             minGSSize = minGSSize,
+                                             maxGSSize = maxGSSize,
                                              pAdjustMethod = "BH",
                                              universe = all.entrez.id
                                             )
-            pathways[['KEGG.M']] <- setentrezToSymbol(pathways[['KEGG.M']], gene.annotation = gene.annotation)
+            pathways[['KEGG.M']]@result <- pathways[['KEGG.M']]@result[
+                which(pathways[['KEGG.M']]@result$p.adjust < pvalcutoff & 
+                          pathways[['KEGG.M']]@result$Count >= minCount), ] 
+            pathways[['KEGG.M']] <- setentrezToSymbol(pathways[['KEGG.M']], gene.annotation = gene.pw.annotation)
         })
         
         
@@ -178,12 +217,16 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                                    TERM2NAME = pwlist$wp.term2name,
                                                    pvalueCutoff = pvalcutoff,
                                                    qvalueCutoff = 1,
-                                                   minGSSize = 0,
-                                                   maxGSSize = Inf,
+                                                   minGSSize = minGSSize,
+                                                   maxGSSize = maxGSSize,
                                                    pAdjustMethod = "BH",
                                                    universe = all.entrez.id
                                             )
-            pathways[['WikiPathways']] <- setentrezToSymbol(pathways[['WikiPathways']], gene.annotation = gene.annotation)
+            pathways[['WikiPathways']]@result <- pathways[['WikiPathways']]@result[
+                which(pathways[['WikiPathways']]@result$p.adjust < pvalcutoff & 
+                          pathways[['WikiPathways']]@result$Count >= minCount), ] 
+            pathways[['WikiPathways']] <- setentrezToSymbol(pathways[['WikiPathways']], 
+                                                            gene.annotation = gene.pw.annotation)
         })
         
         
@@ -194,12 +237,16 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                                TERM2NAME = pwlist$reactome.term2name,
                                                pvalueCutoff = pvalcutoff,
                                                qvalueCutoff = 1,
-                                               minGSSize = 0,
-                                               maxGSSize = Inf,
+                                               minGSSize = minGSSize,
+                                               maxGSSize = maxGSSize,
                                                pAdjustMethod = "BH",
                                                universe = all.entrez.id
                                             )
-            pathways[['Reactome']] <- setentrezToSymbol(pathways[['Reactome']], gene.annotation = gene.annotation)
+            pathways[['Reactome']]@result <- pathways[['Reactome']]@result[
+                which(pathways[['Reactome']]@result$p.adjust < pvalcutoff & 
+                          pathways[['Reactome']]@result$Count >= minCount), ] 
+            pathways[['Reactome']] <- setentrezToSymbol(pathways[['Reactome']], 
+                                                        gene.annotation = gene.pw.annotation)
         })
         
         
@@ -209,12 +256,16 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
                                                TERM2GENE = pwlist$hallmark.term2gene, 
                                                pvalueCutoff = pvalcutoff,
                                                qvalueCutoff = 1,
-                                               minGSSize = 0,
-                                               maxGSSize = Inf,
+                                               minGSSize = minGSSize,
+                                               maxGSSize = maxGSSize,
                                                pAdjustMethod = "BH",
                                                universe = all.entrez.id
                                             )
-            pathways[['MsigHall']] <- setentrezToSymbol(pathways[['MsigHall']], gene.annotation = gene.annotation)
+            pathways[['MsigHall']]@result <- pathways[['MsigHall']]@result[
+                which(pathways[['MsigHall']]@result$p.adjust < pvalcutoff & 
+                          pathways[['MsigHall']]@result$Count >= minCount), ] 
+            pathways[['MsigHall']] <- setentrezToSymbol(pathways[['MsigHall']], 
+                                                        gene.annotation = gene.pw.annotation)
         })
     }
     
@@ -254,7 +305,7 @@ getAllenrichPathways <- function(symbols=NULL, entrez=NULL,
 }
 
 
-setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation){
+setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation, gsea = FALSE){
     
     x <- enrichresult@result
     if(is.null(x)){
@@ -263,16 +314,22 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation){
     }
     message(' set entrez ID to gene symbol using gene annotation file')
     
-    for(i in 1:length(x$geneID)){
-        gs <- stringr::str_split(string = x$geneID[i], pattern = '/')[[1]]
-        symbols <- gene.annotation$SYMBOL[gene.annotation$entrez %in% gs]
-        x$geneID[i] <- paste0(symbols, collapse = '/')
-    }
+    
+    x <- x %>% separate_rows(geneID, sep = "/") %>% 
+        left_join(gene.annotation %>% dplyr::select(entrez, SYMBOL) %>% distinct(), 
+                  by = c('geneID'='entrez')) %>% 
+        mutate(geneID = SYMBOL) %>% 
+        dplyr::select(-SYMBOL) %>% 
+        group_by(ID) %>% 
+        mutate(geneID = paste0(geneID, collapse = "/")) %>% distinct()
+    
     enrichresult@result <- x
     
     return(enrichresult)
     
 }
+
+
 
 
 splitGeneSet <- function(gs){
@@ -281,6 +338,7 @@ splitGeneSet <- function(gs){
 }
 
 addGeneFoldChange <- function(enrichresult, fc_data = top_genes_filt, top_genes = 10){
+    
     # add gene fold change data to GO Enrichment analysis result. 
     # x is enrichGo@result object output of clusterprofiler::enrichGO
     # fc_data : dataframe contains fold change data of genes. columns :  Symbol, logFC
@@ -292,28 +350,34 @@ addGeneFoldChange <- function(enrichresult, fc_data = top_genes_filt, top_genes 
         break
     }
     
-    x$geneID_FC <- 1
-    attributes(enrichresult)$top.genes <- list()
-    for(i in 1:length(x$geneID)){
-        gs <- stringr::str_split(string = x$geneID[i], pattern = '/')[[1]]
-        fcs <- fc_data[fc_data$SYMBOL %in% gs, c("log2FoldChange",'SYMBOL'), drop = FALSE] %>% as.data.frame() %>% 
-            dplyr::arrange(desc(abs(log2FoldChange))) %>% distinct(SYMBOL, .keep_all = TRUE)
-        g_fc <- paste0(fcs$SYMBOL, '(',round(2^(fcs$log2FoldChange),2),')')
+    x <- x %>% separate_rows(geneID, sep = "/") %>% 
+        left_join(fc_data %>% dplyr::select(SYMBOL, log2FoldChange) %>% distinct(SYMBOL, .keep_all = T), 
+                  by = c('geneID'='SYMBOL')) %>% 
+        group_by(ID) %>% 
+        dplyr::arrange(desc(abs(log2FoldChange))) %>% 
+        ungroup() %>% 
+        dplyr::mutate(geneID_FC = paste0(geneID, '(',round(2^(log2FoldChange),2),')')) %>% 
+        dplyr::select(-log2FoldChange) %>% 
+        group_by(ID) %>% 
+        dplyr::mutate(geneID_FC = paste0(geneID_FC, collapse = '/'), 
+                      geneID = paste0(geneID, collapse = '/')) %>% 
+        distinct() %>% 
+        arrange(pvalue)
+    
+    
+    if(!is.null(top_genes)){
         
-        attributes(enrichresult)$top.genes[[x$ID[i]]] <- fcs$SYMBOL
-        
-        if(!is.null(top_genes)){
-            x$geneID_FC_top_genes[i] <- paste0(g_fc[1:min(length(g_fc),top_genes)], collapse = '/')
-        }
-        
-        x$geneID_FC[i] <- paste0(g_fc, collapse = '/')
-        x$geneID[i] <- paste0(fcs$SYMBOL, collapse = '/')
+        pattern <- paste0("^((?:[^/]+/){", top_genes - 1, "}[^/]+).*$")
+        x <- x %>% mutate(geneID_FC_top_genes =gsub(pattern,'\\1',x = geneID_FC))
         
     }
+    
+    
     enrichresult@result <- x
     
     return(enrichresult)
 }
+
 
 simplifyByTopGenes <- function(enrichresult){
     
@@ -370,13 +434,16 @@ pathways_to_df <- function(enrichresult){
 
 getAllGSEA <- function(geneList, 
                        pvalcutoff = 0.1, 
+                       GO.Evidence.IEA = FALSE,
                        GO_CC_MF = TRUE,
                        only.go.kegg = TRUE, 
                        addGeneFoldChange = TRUE, 
                        fc_data = NULL,
-                       simplify = TRUE, 
                        make2df = FALSE){
     
+    #### ..will modify using manual ontology file...
+    #### also should modify addgenefoldchange ...
+       
     pathways <- list()
     
     geneList <- geneList %>% arrange(desc(log2FoldChange))
@@ -384,10 +451,24 @@ getAllGSEA <- function(geneList,
     entrez <- geneList %>% filter(!is.na(entrez)) %>% pull(entrez,log2FoldChange)
     print(head(entrez))
     
-    if(!exists('all.entrez.id')){
-        message('...no all entrez id')
-        return('')
-        
+    
+    if(addGeneFoldChange == TRUE){
+        if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
+    
+    message(glue('GSEA Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
+    
+    if(is.null(entrez)){
+        message("Convert Symbol To Entrez ID...")
+        entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
+    }
+    
+    names(pwlist) <- gsub(x = names(pwlist), pattern = '^(human|mouse)\\.', replacement = '')
+    
+    if(!GO.Evidence.IEA){
+        go.pways <- grep(names(pwlist) , pattern = 'GO.*\\.term2gene')
+        pwlist[go.pways] <- sapply(pwlist[go.pways], 
+                                   function(x){x <- x[x$Evidence != 'IEA',]},
+                                   simplify = F, USE.NAMES = F)
     }
     
     
@@ -396,17 +477,17 @@ getAllGSEA <- function(geneList,
     try(expr = {
         
         pathways[['GO BP']] <- GSEA(geneList = entrez,
-                                    TERM2GENE = mouse.GOBP.term2gene,
-                                    TERM2NAME = mouse.GOBP.term2name,
+                                    TERM2GENE = pwlist$GOBP.term2gene, 
+                                    TERM2NAME = pwlist$GOBP.term2name,
                                     pvalueCutoff = pvalcutoff, 
+                                    minGSSize = 0, 
+                                    maxGSSize = Inf, 
                                     pAdjustMethod = 'BH', 
                                     by = 'fgsea')
-        pathways[['GO BP']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['GO BP']], keyType = 'ENTREZID')
         
-        if(simplify){
-            
-            # pathways[['GO BP']] <- simplify(pathways[['GO BP']])
-        }
+        pathways[['GO BP']]@result <- pathways[['GO BP']]@result[pathways[['GO BP']]@result$p.adjust < pvalcutoff, ] 
+        pathways[['GO BP']] <- setentrezToSymbol(pathways[['GO BP']], gene.annotation = gene.annotation)
+        
         
     })
     
@@ -423,9 +504,6 @@ getAllGSEA <- function(geneList,
                                         by = 'fgsea')
             pathways[['GO CC']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['GO CC']], keyType = 'ENTREZID')
             
-            if(simplify){
-                #   pathways[['GO CC']] <- simplify(pathways[['GO CC']])
-            }
             
         })
         
@@ -440,9 +518,6 @@ getAllGSEA <- function(geneList,
                                         by = 'fgsea')
             pathways[['GO MF']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['GO MF']], keyType = 'ENTREZID')
             
-            if(simplify){
-                #  pathways[['GO MF']] <- simplify(pathways[['GO MF']])
-            }
             
         })   
         
