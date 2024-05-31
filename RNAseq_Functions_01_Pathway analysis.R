@@ -433,34 +433,39 @@ pathways_to_df <- function(enrichresult){
 }
 
 getAllGSEA <- function(geneList, 
-                       pvalcutoff = 0.1, 
-                       GO.Evidence.IEA = FALSE,
+                       pvalcutoff = 0.2, 
+                       minCount = 2,
+                       GO.Evidence.IEA = TRUE,
                        GO_CC_MF = TRUE,
                        only.go.kegg = TRUE, 
                        addGeneFoldChange = TRUE, 
                        fc_data = NULL,
-                       make2df = FALSE){
+                       make2df = FALSE,
+                       pwlist = pwlist.human,
+                       minGSSize = 2,
+                       maxGSSize = Inf,
+                       gene.annotation = gene.annotation,
+                       simplifyByTopGenes = FALSE
+){
     
     #### ..will modify using manual ontology file...
     #### also should modify addgenefoldchange ...
-       
+    
     pathways <- list()
     
-    geneList <- geneList %>% arrange(desc(log2FoldChange))
+    pathways <- list()
     
-    entrez <- geneList %>% filter(!is.na(entrez)) %>% pull(entrez,log2FoldChange)
-    print(head(entrez))
-    
+    gene.annotation$entrez <- as.character(gene.annotation$entrez)
     
     if(addGeneFoldChange == TRUE){
         if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
     
-    message(glue('GSEA Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
+    message(glue('Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
     
-    if(is.null(entrez)){
-        message("Convert Symbol To Entrez ID...")
-        entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
-    }
+    # if(is.null(entrez)){
+    #     message("Convert Symbol To Entrez ID...")
+    #     entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
+    # }
     
     names(pwlist) <- gsub(x = names(pwlist), pattern = '^(human|mouse)\\.', replacement = '')
     
@@ -472,21 +477,28 @@ getAllGSEA <- function(geneList,
     }
     
     
+    if(addGeneFoldChange == TRUE){
+        if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
+    
+    message(glue('GSEA Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
+    
+    
     cat('GO BP GSEA...\n')
     
     try(expr = {
         
-        pathways[['GO BP']] <- GSEA(geneList = entrez,
+        pathways[['GO BP']] <- GSEA(geneList = geneList,
                                     TERM2GENE = pwlist$GOBP.term2gene, 
                                     TERM2NAME = pwlist$GOBP.term2name,
                                     pvalueCutoff = pvalcutoff, 
-                                    minGSSize = 0, 
-                                    maxGSSize = Inf, 
+                                    minGSSize = minGSSize, 
+                                    maxGSSize = maxGSSize, 
                                     pAdjustMethod = 'BH', 
                                     by = 'fgsea')
         
+        
         pathways[['GO BP']]@result <- pathways[['GO BP']]@result[pathways[['GO BP']]@result$p.adjust < pvalcutoff, ] 
-        pathways[['GO BP']] <- setentrezToSymbol(pathways[['GO BP']], gene.annotation = gene.annotation)
+        pathways[['GO BP']] <- setentrezToSymbol_GSEA(pathways[['GO BP']], gene.annotation = gene.annotation)
         
         
     })
@@ -496,13 +508,15 @@ getAllGSEA <- function(geneList,
         cat('GO CC enrichment analysis...\n')
         try(expr = {
             
-            pathways[['GO CC']] <- GSEA(geneList = entrez,
-                                        TERM2GENE = mouse.GOCC.term2gene,
-                                        TERM2NAME = mouse.GOCC.term2name,
+            pathways[['GO CC']] <- GSEA(geneList = geneList,
+                                        TERM2GENE = pwlist$GOCC.term2gene,
+                                        TERM2NAME = pwlist$GOCC.term2name,
                                         pvalueCutoff = pvalcutoff, 
+                                        minGSSize = minGSSize, 
+                                        maxGSSize = maxGSSize, 
                                         pAdjustMethod = 'BH', 
                                         by = 'fgsea')
-            pathways[['GO CC']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['GO CC']], keyType = 'ENTREZID')
+            pathways[['GO CC']] <-  setentrezToSymbol_GSEA(pathways[['GO CC']], gene.annotation = gene.annotation)
             
             
         })
@@ -510,13 +524,15 @@ getAllGSEA <- function(geneList,
         cat('GO MF enrichment analysis...\n')
         try(expr = {
             
-            pathways[['GO MF']] <- GSEA(geneList = entrez,
-                                        TERM2GENE = mouse.GOMF.term2gene,
-                                        TERM2NAME = mouse.GOMF.term2name,
+            pathways[['GO MF']] <- GSEA(geneList = geneList,
+                                        TERM2GENE = pwlist$GOMF.term2gene,
+                                        TERM2NAME = pwlist$GOMF.term2name,
                                         pvalueCutoff = pvalcutoff, 
+                                        minGSSize = minGSSize, 
+                                        maxGSSize = maxGSSize, 
                                         pAdjustMethod = 'BH', 
                                         by = 'fgsea')
-            pathways[['GO MF']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['GO MF']], keyType = 'ENTREZID')
+            pathways[['GO MF']] <- setentrezToSymbol_GSEA(pathways[['GO MF']], gene.annotation = gene.annotation)
             
             
         })   
@@ -525,58 +541,72 @@ getAllGSEA <- function(geneList,
     
     cat('KEGG enrichment analysis...\n')
     try(expr = {
-        pathways[['KEGG']] <- gseKEGG(geneList = entrez, 
-                                      organism = "mmu",
-                                      pvalueCutoff =  pvalcutoff,
-                                      pAdjustMethod = "BH" 
-                                      
-        )
-        pathways[['KEGG']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['KEGG']], keyType = 'ENTREZID')
+        pathways[['KEGG']] <- GSEA(geneList = geneList,
+                                   TERM2GENE = pwlist$KEGG.term2gene,
+                                   TERM2NAME = pwlist$KEGG.term2name,
+                                   pvalueCutoff = pvalcutoff, 
+                                   minGSSize = minGSSize, 
+                                   maxGSSize = maxGSSize, 
+                                   pAdjustMethod = 'BH', 
+                                   by = 'fgsea')
+        pathways[['KEGG']] <-  setentrezToSymbol_GSEA(pathways[['KEGG']], gene.annotation = gene.annotation)
     })
     
     
     if(only.go.kegg ==FALSE){
         try(expr = {
             cat('KEGG Module enrichment analysis...\n')
-            pathways[['KEGG.M']] <- gseMKEGG(geneList = entrez, 
-                                             organism = "mmu",
-                                             pvalueCutoff =  pvalcutoff,
-                                             pAdjustMethod = "BH" 
-            )
-            pathways[['KEGG.M']]  <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['KEGG.M']] , keyType = 'ENTREZID')
+            pathways[['KEGG.M']] <- GSEA(geneList = geneList,
+                                         TERM2GENE = pwlist$MKEGG.term2gene,
+                                         TERM2NAME = pwlist$MKEGG.term2name,
+                                         pvalueCutoff = pvalcutoff, 
+                                         minGSSize = minGSSize, 
+                                         maxGSSize = maxGSSize, 
+                                         pAdjustMethod = 'BH', 
+                                         by = 'fgsea')
+            pathways[['KEGG.M']] <- setentrezToSymbol_GSEA(pathways[['KEGG.M']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat('WikiPathway enrichment analysis...\n')
-            pathways[['WikiPathways']] <- gseWP(geneList = entrez,
-                                                organism = "Mus musculus",
-                                                pvalueCutoff = pvalcutoff,
-                                                pAdjustMethod = "BH" 
-            )
-            pathways[['WikiPathways']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['WikiPathways']], keyType = 'ENTREZID')
+            pathways[['WikiPathways']] <- GSEA(geneList = geneList,
+                                               TERM2GENE = pwlist$wp.term2gene,
+                                               TERM2NAME = pwlist$wp.term2name,
+                                               pvalueCutoff = pvalcutoff, 
+                                               minGSSize = minGSSize, 
+                                               maxGSSize = maxGSSize, 
+                                               pAdjustMethod = 'BH', 
+                                               by = 'fgsea')
+            pathways[['WikiPathways']] <- setentrezToSymbol_GSEA(pathways[['WikiPathways']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat('Reactome enrichment analysis...\n')
-            pathways[['Reactome']] <- gsePathway(gene = entrez, 
-                                                 organism = "mouse",
-                                                 pvalueCutoff = pvalcutoff,
-                                                 pAdjustMethod = "BH" 
-            )
-            pathways[['Reactome']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['Reactome']], keyType = 'ENTREZID')
+            pathways[['Reactome']] <- GSEA(geneList = geneList,
+                                           TERM2GENE = pwlist$reactome.term2gene,
+                                           TERM2NAME = pwlist$reactome.term2gene,
+                                           pvalueCutoff = pvalcutoff, 
+                                           minGSSize = minGSSize, 
+                                           maxGSSize = maxGSSize, 
+                                           pAdjustMethod = 'BH', 
+                                           by = 'fgsea')
+            pathways[['Reactome']] <- setentrezToSymbol_GSEA(pathways[['Reactome']], gene.annotation = gene.annotation)
         })
         
         
         try(expr = {
             cat("MsigDB Hallmark enrichment analysis...\n")
-            pathways[['MsigHall']] <- GSEA(geneList = entrez,
-                                           pvalueCutoff = pvalcutoff,
-                                           TERM2GENE = m_t2g
-                                           
-            )
-            pathways[['MsigHall']] <- setReadable(OrgDb = org.Mm.eg.db, x = pathways[['MsigHall']], keyType = 'ENTREZID')
+            pathways[['MsigHall']] <- GSEA(geneList = geneList,
+                                           TERM2GENE = pwlist$hallmark.term2gene,
+                                           TERM2NAME = pwlist$hallmark.term2name,
+                                           pvalueCutoff = pvalcutoff, 
+                                           minGSSize = minGSSize, 
+                                           maxGSSize = maxGSSize, 
+                                           pAdjustMethod = 'BH', 
+                                           by = 'fgsea')
+            pathways[['MsigHall']] <- setentrezToSymbol_GSEA(pathways[['MsigHall']], gene.annotation = gene.annotation)
         })
     }
     
@@ -639,7 +669,30 @@ addGeneFoldChange_GSEA <- function(enrichresult, fc_data = top_genes_filt, top_g
     return(enrichresult)
 }
 
-
+setentrezToSymbol_GSEA <- function(enrichresult, gene.annotation = gene.annotation, gsea = FALSE){
+    
+    x <- enrichresult@result
+    if(is.null(x)){
+        message('no enrich result...')
+        break
+    }
+    message(' set entrez ID to gene symbol using gene annotation file')
+    
+    x$geneID <- x$core_enrichment
+    x <- x %>% separate_rows(geneID, sep = "/") %>% 
+        left_join(gene.annotation %>% dplyr::select(entrez, SYMBOL) %>% distinct(), 
+                  by = c('geneID'='entrez')) %>% 
+        mutate(geneID = SYMBOL) %>% 
+        dplyr::select(-SYMBOL) %>% 
+        group_by(ID) %>% 
+        mutate(geneID = paste0(geneID, collapse = "/")) %>% distinct()
+    
+    x <- x %>% column_to_rownames(var = 'ID') %>% as.data.frame()
+    enrichresult@result <- x
+    
+    return(enrichresult)
+    
+}
 
 gsea_to_df <- function(enrichresult){
     
@@ -818,7 +871,7 @@ GOtoGeneSet <- function(goid, goname,
     if(is.null(goid)){
         goid <-  gonamedb %>% dplyr::filter(name == goname) %>% pull(term) %>% unique()
     }
-
+    
     geneset <- godb %>% left_join(gonamedb) %>% filter(term == goid) %>% distinct()
     
     if(toSYMBOL){
@@ -855,7 +908,7 @@ get_intersect_pathway <- function(l, anti = FALSE){
     }
     
     for(i in 1:length(intersect_pw)){
-
+        
         if(anti){
             intersect_pw[[i]] <- purrr::reduce(intersect_pw[[i]], .f = anti_join, 
                                                by = c('ID','Description')
@@ -870,10 +923,9 @@ get_intersect_pathway <- function(l, anti = FALSE){
             )
             intersect_pw[[i]]  <- intersect_pw[[i]] %>% dplyr::select(ID,Description, colns_w_suffix)
         }
-
+        
     }
     return(intersect_pw)
     
 }
-
 
