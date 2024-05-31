@@ -7,9 +7,8 @@
 # RNAseq functions 3 - DEG Functions #####
 #
 
-
 library(ggVennDiagram)
-
+library(ggvenn)
 
 getresGeneTable <- function(dds= dds, name=NULL, contrast=NULL, 
                             compare.groups, 
@@ -97,8 +96,8 @@ ResTablesToUpDown <- function(list){
         up_name <- paste0(names(list)[i], "_UP")
         dn_name <- paste0(names(list)[i], "_DN")
         
-        sigList[[up_name]] <- t %>% filter(log2FoldChange > 0)
-        sigList[[dn_name]] <- t %>% filter(log2FoldChange < 0) 
+        sigList[[up_name]] <- t %>% dplyr::filter(log2FoldChange > 0)
+        sigList[[dn_name]] <- t %>% dplyr::filter(log2FoldChange < 0) 
         
         
     }
@@ -123,6 +122,7 @@ getGroupDEGs <- function(dds=dds,
                       expression_cutoff=NULL, 
                       normalized.counts=NULL){
     lfcThreshold <- lfcThreshold
+    
     if(is.null(all.res.tables)){
         res <- getresGeneTable(dds= dds, 
                                contrast = c('group',group1, group2), 
@@ -134,6 +134,8 @@ getGroupDEGs <- function(dds=dds,
         res <- all.res.tables[[paste0(group1, "_vs_", group2)]]
     
         }
+    
+
     
     
     #### !!!!!!!!!!!!! if, else state should be covered with  parenthesis #####
@@ -163,6 +165,7 @@ getGroupDEGs <- function(dds=dds,
     }
     
     print(nrow(sig))
+    
     return(sig)
     
 }
@@ -236,19 +239,19 @@ getAllSigGeneTables <- function(combination_table = all.combination,
 
 # DEG Statistics 
 
-dge.stat <- function(x, compare){
-    
-    if(is.character(x)) {x <- get(x) }
-    
-    
-    up <- nrow(x %>% filter( log2FoldChange > 0))
-    down <- nrow(x %>% filter( log2FoldChange < 0))
-    
-    return(data.frame(
-        Compare = compare, 
-        ALL = up + down,
-        UP = up, DOWN = down))
-}
+# dge.sta%>% <- function(x, compare){
+#     
+#     if(is.character(x)) {x <- get(x) }
+#     
+#     
+#     up <- nrow(x %>% filter( log2FoldChange > 0))
+#     down <- nrow(x %>% filter( log2FoldChange < 0))
+#     
+#     return(data.frame(
+#         Compare = compare, 
+#         ALL = up + down,
+#         UP = up, DOWN = down))
+# }
 
 
 deg.updn.list.stats <- function(lst, combination.table = compare.combination){
@@ -367,18 +370,27 @@ ggVennFromTable <- function(lst,
                             category.names =  names(lst),
                             title = "Venn", 
                             expand.x = 0.2, 
-                            col = 'blue'){
+                            col = NULL){
     
-    ggVennDiagram(x = lapply(lst, `[[`, 'gene_id') , 
-                  category.names = category.names, set_color = "black")   + 
-        scale_x_continuous(expand = expansion(expand.x)) + 
-        scale_color_manual(values = rep('black', length(lst))) +
-        ggsci::scale_fill_material(col) + 
-        theme(legend.position = "none") + 
-        ggtitle(title)
+    # ggVennDiagram(x = lapply(lst, `[[`, 'gene_id') , 
+    #               category.names = category.names, set_color = "black")   + 
+    #     scale_x_continuous(expand = expansion(expand.x)) + 
+    #     scale_color_manual(values = rep('black', length(lst))) +
+    #     ggsci::scale_fill_material(col) + 
+    #     theme(legend.position = "none") + 
+    #     ggtitle(title)
+    
+    if(is.null(col)){ col <- rep('transparent', length(lst))}
+    
+    ggvenn(data = lapply(lst, `[[`, 'gene_id'), show_percentage = F, text_size = 8,
+           set_name_size = 5,auto_scale=FALSE, fill_color = col) +
+        theme(
+            plot.background = element_rect(fill = 'transparent', colour = 'transparent'),
+            panel.background = element_rect(fill = 'transparent', colour = 'transparent'),
+            legend.position = 'none'
+        )
     
 }
-
 
 getMaxMedian <- function(compare.groups){
     compare.groups.samples <- meta.data %>% filter(group %in% compare.groups) %>% dplyr::select(sample_id, group)
