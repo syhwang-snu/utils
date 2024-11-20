@@ -18,7 +18,7 @@ library(tidyverse)
 library(data.table)
 
 
-pathway.version <- 'E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202310'
+# pathway.version <- 'E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202310'
 
 message(glue('Pathway version : {pathway.version}'))
 
@@ -110,7 +110,7 @@ getAllenrichPathways <- function(symbols=NULL,
         pathways[['GO BP']]@result <- pathways[['GO BP']]@result[
                             which(pathways[['GO BP']]@result$p.adjust < pvalcutoff & 
                                       pathways[['GO BP']]@result$Count >= minCount), ] 
-        pathways[['GO BP']] <- setentrezToSymbol(pathways[['GO BP']], gene.annotation = gene.pw.annotation)
+
         
         if(simplify){
             # pathways[['GO BP']] <- simplify(pathways[['GO BP']])
@@ -136,7 +136,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['GO CC']]@result <- pathways[['GO CC']]@result[
                 which(pathways[['GO CC']]@result$p.adjust < pvalcutoff & 
                           pathways[['GO CC']]@result$Count >= minCount), ] 
-            pathways[['GO CC']] <- setentrezToSymbol(pathways[['GO CC']], gene.annotation = gene.pw.annotation)
+
             
             if(simplify){
                 #   pathways[['GO CC']] <- simplify(pathways[['GO CC']])
@@ -160,7 +160,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['GO MF']]@result <- pathways[['GO MF']]@result[
                 which(pathways[['GO MF']]@result$p.adjust < pvalcutoff & 
                           pathways[['GO MF']]@result$Count >= minCount), ] 
-            pathways[['GO MF']] <- setentrezToSymbol(pathways[['GO MF']], gene.annotation = gene.pw.annotation)
+
             
             if(simplify){
                 # pathways[['GO MF']] <- simplify(pathways[['GO MF']])
@@ -185,7 +185,7 @@ getAllenrichPathways <- function(symbols=NULL,
         pathways[['KEGG']]@result <- pathways[['KEGG']]@result[
             which(pathways[['KEGG']]@result$p.adjust < pvalcutoff & 
                       pathways[['KEGG']]@result$Count >= minCount), ] 
-        pathways[['KEGG']] <- setentrezToSymbol(pathways[['KEGG']], gene.annotation = gene.pw.annotation)
+
         
     })
     
@@ -206,7 +206,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['KEGG.M']]@result <- pathways[['KEGG.M']]@result[
                 which(pathways[['KEGG.M']]@result$p.adjust < pvalcutoff & 
                           pathways[['KEGG.M']]@result$Count >= minCount), ] 
-            pathways[['KEGG.M']] <- setentrezToSymbol(pathways[['KEGG.M']], gene.annotation = gene.pw.annotation)
+
         })
         
         
@@ -225,8 +225,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['WikiPathways']]@result <- pathways[['WikiPathways']]@result[
                 which(pathways[['WikiPathways']]@result$p.adjust < pvalcutoff & 
                           pathways[['WikiPathways']]@result$Count >= minCount), ] 
-            pathways[['WikiPathways']] <- setentrezToSymbol(pathways[['WikiPathways']], 
-                                                            gene.annotation = gene.pw.annotation)
+
         })
         
         
@@ -245,8 +244,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['Reactome']]@result <- pathways[['Reactome']]@result[
                 which(pathways[['Reactome']]@result$p.adjust < pvalcutoff & 
                           pathways[['Reactome']]@result$Count >= minCount), ] 
-            pathways[['Reactome']] <- setentrezToSymbol(pathways[['Reactome']], 
-                                                        gene.annotation = gene.pw.annotation)
+
         })
         
         
@@ -264,8 +262,7 @@ getAllenrichPathways <- function(symbols=NULL,
             pathways[['MsigHall']]@result <- pathways[['MsigHall']]@result[
                 which(pathways[['MsigHall']]@result$p.adjust < pvalcutoff & 
                           pathways[['MsigHall']]@result$Count >= minCount), ] 
-            pathways[['MsigHall']] <- setentrezToSymbol(pathways[['MsigHall']], 
-                                                        gene.annotation = gene.pw.annotation)
+
         })
     }
     
@@ -279,7 +276,18 @@ getAllenrichPathways <- function(symbols=NULL,
                 message(glue('{modules[i]} add gene fold change'))
             })
         }
+    }else{
+        
+        for(i in 1:length(modules)){
+            try(expr = {
+                pathways[[modules[i]]] <- setentrezToSymbol(setentrezToSymbol[[modules[i]]], 
+                                                            gene.annotation = gene.pw.annotation)
+                message(glue('{modules[i]} set Entrez ID to SYMBOL'))
+            })
+        
     }
+    }
+
     
     if(simplifyByTopGenes == TRUE){
         
@@ -330,8 +338,6 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation, g
 }
 
 
-
-
 splitGeneSet <- function(gs){
     gs <- stringr::str_split(string = gs, pattern = '/')[[1]]
     return(gs)
@@ -351,16 +357,17 @@ addGeneFoldChange <- function(enrichresult, fc_data = top_genes_filt, top_genes 
     }
     
     x <- x %>% separate_rows(geneID, sep = "/") %>% 
-        left_join(fc_data %>% dplyr::select(SYMBOL, log2FoldChange) %>% distinct(SYMBOL, .keep_all = T), 
-                  by = c('geneID'='SYMBOL')) %>% 
+        left_join(fc_data %>% dplyr::select(gene_id, SYMBOL,log2FoldChange) %>% distinct(gene_id, .keep_all = T), 
+                  by = c('geneID'='gene_id')) %>% 
         group_by(ID) %>% 
         dplyr::arrange(desc(abs(log2FoldChange))) %>% 
         ungroup() %>% 
-        dplyr::mutate(geneID_FC = paste0(geneID, '(',round(2^(log2FoldChange),2),')')) %>% 
+        dplyr::mutate(geneID_FC = paste0(SYMBOL, '(',round(2^(log2FoldChange),2),')')) %>% 
         dplyr::select(-log2FoldChange) %>% 
         group_by(ID) %>% 
         dplyr::mutate(geneID_FC = paste0(geneID_FC, collapse = '/'), 
-                      geneID = paste0(geneID, collapse = '/')) %>% 
+                      geneID = paste0(geneID, collapse = '/'),
+                      SYMBOL = paste0(SYMBOL, collapse = '/')) %>% 
         distinct() %>% 
         arrange(pvalue)
     
@@ -444,18 +451,17 @@ getAllGSEA <- function(geneList,
                        pwlist = pwlist.human,
                        minGSSize = 2,
                        maxGSSize = Inf,
-                       gene.annotation = gene.annotation,
+                       gene.pw.annotation = gene.pw.annotation,
                        simplifyByTopGenes = FALSE
 ){
     
-    #### ..will modify using manual ontology file...
+    #### geneList :
     #### also should modify addgenefoldchange ...
     
     pathways <- list()
     
-    pathways <- list()
     
-    gene.annotation$entrez <- as.character(gene.annotation$entrez)
+    gene.pw.annotation$entrez <- as.character(gene.pw.annotation$entrez)
     
     if(addGeneFoldChange == TRUE){
         if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
@@ -487,20 +493,16 @@ getAllGSEA <- function(geneList,
     
     try(expr = {
         
-        pathways[['GO BP']] <- GSEA(geneList = geneList,
+        pathways[['GO BP']] <- clusterProfiler::GSEA(geneList = geneList,
                                     TERM2GENE = pwlist$GOBP.term2gene, 
                                     TERM2NAME = pwlist$GOBP.term2name,
                                     pvalueCutoff = pvalcutoff, 
                                     minGSSize = minGSSize, 
                                     maxGSSize = maxGSSize, 
                                     pAdjustMethod = 'BH', 
-                                    by = 'fgsea')
-        
-        
-        pathways[['GO BP']]@result <- pathways[['GO BP']]@result[pathways[['GO BP']]@result$p.adjust < pvalcutoff, ] 
-        pathways[['GO BP']] <- setentrezToSymbol_GSEA(pathways[['GO BP']], gene.annotation = gene.annotation)
-        
-        
+                                    by = 'fgsea',
+                                    BPPARAM=SnowParam(workers = 20))
+
     })
     
     if(GO_CC_MF == TRUE){
@@ -515,9 +517,8 @@ getAllGSEA <- function(geneList,
                                         minGSSize = minGSSize, 
                                         maxGSSize = maxGSSize, 
                                         pAdjustMethod = 'BH', 
-                                        by = 'fgsea')
-            pathways[['GO CC']] <-  setentrezToSymbol_GSEA(pathways[['GO CC']], gene.annotation = gene.annotation)
-            
+                                        by = 'fgsea',
+                                        BPPARAM=SnowParam(workers = 20))
             
         })
         
@@ -531,8 +532,8 @@ getAllGSEA <- function(geneList,
                                         minGSSize = minGSSize, 
                                         maxGSSize = maxGSSize, 
                                         pAdjustMethod = 'BH', 
-                                        by = 'fgsea')
-            pathways[['GO MF']] <- setentrezToSymbol_GSEA(pathways[['GO MF']], gene.annotation = gene.annotation)
+                                        by = 'fgsea',
+                                        BPPARAM=SnowParam(workers = 20))
             
             
         })   
@@ -548,8 +549,9 @@ getAllGSEA <- function(geneList,
                                    minGSSize = minGSSize, 
                                    maxGSSize = maxGSSize, 
                                    pAdjustMethod = 'BH', 
-                                   by = 'fgsea')
-        pathways[['KEGG']] <-  setentrezToSymbol_GSEA(pathways[['KEGG']], gene.annotation = gene.annotation)
+                                   by = 'fgsea',
+                                   BPPARAM=SnowParam(workers = 20))
+
     })
     
     
@@ -563,8 +565,9 @@ getAllGSEA <- function(geneList,
                                          minGSSize = minGSSize, 
                                          maxGSSize = maxGSSize, 
                                          pAdjustMethod = 'BH', 
-                                         by = 'fgsea')
-            pathways[['KEGG.M']] <- setentrezToSymbol_GSEA(pathways[['KEGG.M']], gene.annotation = gene.annotation)
+                                         by = 'fgsea',
+                                         BPPARAM=SnowParam(workers = 20))
+
         })
         
         
@@ -577,8 +580,9 @@ getAllGSEA <- function(geneList,
                                                minGSSize = minGSSize, 
                                                maxGSSize = maxGSSize, 
                                                pAdjustMethod = 'BH', 
-                                               by = 'fgsea')
-            pathways[['WikiPathways']] <- setentrezToSymbol_GSEA(pathways[['WikiPathways']], gene.annotation = gene.annotation)
+                                               by = 'fgsea',
+                                               BPPARAM=SnowParam(workers = 20))
+
         })
         
         
@@ -591,9 +595,11 @@ getAllGSEA <- function(geneList,
                                            minGSSize = minGSSize, 
                                            maxGSSize = maxGSSize, 
                                            pAdjustMethod = 'BH', 
-                                           by = 'fgsea')
-            pathways[['Reactome']] <- setentrezToSymbol_GSEA(pathways[['Reactome']], gene.annotation = gene.annotation)
-        })
+                                           by = 'fgsea',
+                                           BPPARAM=SnowParam(workers = 20))
+
+        }
+        )
         
         
         try(expr = {
@@ -605,8 +611,9 @@ getAllGSEA <- function(geneList,
                                            minGSSize = minGSSize, 
                                            maxGSSize = maxGSSize, 
                                            pAdjustMethod = 'BH', 
-                                           by = 'fgsea')
-            pathways[['MsigHall']] <- setentrezToSymbol_GSEA(pathways[['MsigHall']], gene.annotation = gene.annotation)
+                                           by = 'fgsea',
+                                           BPPARAM=SnowParam(workers = 20))
+
         })
     }
     
@@ -620,7 +627,17 @@ getAllGSEA <- function(geneList,
                 message(glue('{modules[i]} add gene fold change'))
             })
         }
+    }else{
+        
+        try(expr = {
+            pathways[[modules[i]]] <- setentrezToSymbol_GSEA(pathways[[modules[i]]], 
+                                                             gene.annotation = gene.pw.annotation)
+            message(glue('{modules[i]} set Entrez id to SYMBOL'))
+        })
+        
     }
+    
+
     cat(glue('{paste0(modules, collapse =",")} loaded'), sep = '\n')
     
     if(make2df == TRUE){
@@ -631,45 +648,64 @@ getAllGSEA <- function(geneList,
     
 }
 
+
+
 addGeneFoldChange_GSEA <- function(enrichresult, fc_data = top_genes_filt, top_genes = 10){
     # add gene fold change data to GSEA result. 
     # x is enrichGo@result object output of clusterprofiler::gseGO
     # fc_data : dataframe contains fold change data of genes. columns : Symbol, logFC
     # top_genes : make a new column that only contains N number of top fold change genes in each GO term. 
     
-    x <- data.frame(enrichresult)
+    x <- enrichresult@result
     if(is.null(x)){
         message('no enrich result...')
         break
     }
     
-    x$core_enrichment_FC <- 1
-    attributes(enrichresult)$top.genes <- list()
+    x$geneID <- x$core_enrichment
+    x <- x %>% separate_rows(geneID, sep = "/") %>% 
+        left_join(fc_data %>% dplyr::select(gene_id, SYMBOL,log2FoldChange) %>% distinct(gene_id, .keep_all = T), 
+                  by = c('geneID'='gene_id')) %>% 
+        group_by(ID) %>% 
+        dplyr::arrange(desc(abs(log2FoldChange))) %>% 
+        ungroup() %>% 
+        dplyr::mutate(geneID_FC = paste0(SYMBOL, '(',round(2^(log2FoldChange),2),')')) %>% 
+        dplyr::select(-log2FoldChange) %>% 
+        group_by(ID) %>% 
+        dplyr::mutate(geneID_FC = paste0(geneID_FC, collapse = '/'), 
+                      geneID = paste0(geneID, collapse = '/'),
+                      SYMBOL = paste0(SYMBOL, collapse = '/')) %>% 
+        distinct() %>% 
+        arrange(pvalue)
     
-    for(i in 1:length(x$core_enrichment)){
-        
-        gs <- stringr::str_split(string = x$core_enrichment[i], pattern = '/')[[1]]
-        
-        fcs <- fc_data[fc_data$SYMBOL %in% gs, c("log2FoldChange",'SYMBOL'), drop = FALSE] %>% as.data.frame() %>% 
-            dplyr::arrange(desc(abs(log2FoldChange))) %>% distinct(SYMBOL, .keep_all = TRUE)
-        
-        g_fc <- paste0(fcs$SYMBOL, '(',round(2^(fcs$log2FoldChange),2),')')
-        
-        attributes(enrichresult)$top.genes[[x$ID[i]]] <- fcs$SYMBOL
-        
-        if(!is.null(top_genes)){
-            x$geneID_FC_top_genes[i] <- paste0(g_fc[1:min(length(g_fc),top_genes)], collapse = '/')
-        }
-        
-        x$core_enrichment_FC[i] <- paste0(g_fc, collapse = '/')
-        x$core_enrichment[i] <- paste0(fcs$SYMBOL, collapse = '/')
-    }
+    
+    # x$core_enrichment_FC <- 1
+    # attributes(enrichresult)$top.genes <- list()
+    # 
+    # for(i in 1:length(x$core_enrichment)){
+    #     
+    #     gs <- stringr::str_split(string = x$core_enrichment[i], pattern = '/')[[1]]
+    #     
+    #     fcs <- fc_data[fc_data$SYMBOL %in% gs, c("log2FoldChange",'SYMBOL'), drop = FALSE] %>% as.data.frame() %>% 
+    #         dplyr::arrange(desc(abs(log2FoldChange))) %>% distinct(SYMBOL, .keep_all = TRUE)
+    #     
+    #     g_fc <- paste0(fcs$SYMBOL, '(',round(2^(fcs$log2FoldChange),2),')')
+    #     
+    #     attributes(enrichresult)$top.genes[[x$ID[i]]] <- fcs$SYMBOL
+    #     
+    #     if(!is.null(top_genes)){
+    #         x$geneID_FC_top_genes[i] <- paste0(g_fc[1:min(length(g_fc),top_genes)], collapse = '/')
+    #     }
+    #     
+    #     x$core_enrichment_FC[i] <- paste0(g_fc, collapse = '/')
+    #     x$core_enrichment[i] <- paste0(fcs$SYMBOL, collapse = '/')
+    # }
     enrichresult@result <- x
     
     return(enrichresult)
 }
 
-setentrezToSymbol_GSEA <- function(enrichresult, gene.annotation = gene.annotation, gsea = FALSE){
+setentrezToSymbol_GSEA <- function(enrichresult, gene.annotation = gene.pw.annotation){
     
     x <- enrichresult@result
     if(is.null(x)){
@@ -687,7 +723,6 @@ setentrezToSymbol_GSEA <- function(enrichresult, gene.annotation = gene.annotati
         group_by(ID) %>% 
         mutate(geneID = paste0(geneID, collapse = "/")) %>% distinct()
     
-    x <- x %>% column_to_rownames(var = 'ID') %>% as.data.frame()
     enrichresult@result <- x
     
     return(enrichresult)
