@@ -2,34 +2,36 @@ library(patchwork)
 library(cowplot)
 library(ggpubr)
 library(ggh4x)
+library(qualpalr)
+sunset.col <- c("grey","#FFDDC1", "#FFAB80", "#FF5252", "#B71C1C")
 
 genePlot <- function(symbol=NULL,
                      gene_id=NULL,
                      dds=dds.all, 
+                     cols = sunset.col,
+                     meta.data = meta.data, 
+                     gene.annotation = gene.annotation,
                      stats = FALSE, 
-                     group = NULL, 
+                     x = NULL, 
+                     group = NULL,
                      title = NULL, 
+                     color = NULL, 
+                     alpha = NULL, 
                      title_suffix = NULL,
-                     my_comparisons = list( c("Antrum_Ctrl_SPF", "Antrum_Ctrl_GF")), 
+                     label = NULL,
+                     legend.position = "none",
+                     my_comparisons = list(c("A", "B")), 
                      force_zero = TRUE, 
                      x.angle = 90, 
-                     meta.data = meta.data, 
-                     color = 'treat', 
-                     alpha = 'strain', 
                      barplot = T, 
-                     gc.label = TRUE, 
-                     xlab = c('W20','W44'), 
-                     sep.plot =FALSE, 
                      title.size = 12, x.size = 10, y.size = 10, subtitle.size = 8,
                      saveplot = T, savename = NULL, savedir = './gene', save.x = 7, save.y =  10, save.format = 'png',
-                     label = c('Ctrl SPF', 'Ctrl GF','H.felis SPF', 'H.felis GF', 
-                               'MNU W20 SPF', 'MNU W20 GF', 'MNU W44 SPF', 'MNU W44 GF'),
                      group.order = NULL
                      )
     {
     
     if(is.null(gene_id)){
-        g2id <- gene.annotation$gene_id[gene.annotation$SYMBOL == symbol][1]
+        g2id <- gene.annotation$gene_id[which(gene.annotation$SYMBOL == symbol)][1]
         
         geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", 
                                  normalized = TRUE,
@@ -39,12 +41,10 @@ genePlot <- function(symbol=NULL,
         g2id <- gene_id
         geneCounts <- plotCounts(dds = dds, gene = g2id, intgroup = "group", normalized = TRUE,
                                  returnData = TRUE, transform =FALSE)
-        symbol <- gene.annotation$SYMBOL[gene.annotation$gene_id == gene_id][1]
+        symbol <- gene.annotation$SYMBOL[which(gene.annotation$gene_id == gene_id)][1]
     }
     
-
-    gene_name <- gene.annotation$gene_name[gene.annotation$SYMBOL == symbol]
-    
+    gene_name <- gene.annotation$gene_name[which(gene.annotation$SYMBOL == symbol)]
     
     if(is.null(title)){
         title <- paste0(symbol, ' ',title_suffix)
@@ -55,71 +55,59 @@ genePlot <- function(symbol=NULL,
         geneCounts$group <- factor(geneCounts$group, levels =  group)
     }
     if(!is.null(meta.data)){
+        
+
         geneCounts <- geneCounts %>% rownames_to_column('sample_id') %>% left_join(meta.data)
     }
     
-    geneCounts$treat <- factor(geneCounts$treat, levels= c("Ctrl", 'MNU', "Felis"))
-    cols = c('black','blue', 'red')
-    
     if(!is.null(group.order)){
         geneCounts$group <- factor(geneCounts$group, levels= group.order)
-        
     }
     
     
-    p <- ggboxplot(geneCounts, x = "group", y = "count", 
-                   add = "jitter", 
-                   title = title, subtitle = subtitle,
-                    color = color, 
-                    fill = color,
-                    alpha = alpha,
-                   palette = 'lancet',
-                   ylab = "Normalized Counts",
-                   width = 0.7, 
-                   lwd = 0.5, 
-                   fatten = 0.8) + 
-        scale_alpha_manual(values = c(0,0.2)) +
-        scale_color_manual(values = cols) + 
-        scale_fill_manual(values = cols) + 
-        theme(title = element_text(size=title.size, face='bold'), 
-              plot.subtitle = element_text(size = subtitle.size,face='bold'),
-              axis.title.x = element_blank(),
-              axis.text.x = element_text(size = x.size, face='bold', angle = x.angle), 
-              axis.text.y = element_text(size = y.size, face='bold'), 
-              axis.title.y = element_text(size = y.size, face='bold'),
-              plot.background = element_rect(fill = 'transparent'), 
-              panel.background = element_rect(fill = 'transparent'), 
-              legend.position = 'none') 
-    # https://stackoverflow.com/questions/15887461/remove-empty-factors-from-clustered-bargraph-in-ggplot2-with-multiple-facets
-    
-    if(gc.label){
+    if(barplot){
         
-        treat.labs <- c("Ctrl", 'MNU', "H.felis")
-        names(treat.labs) <- c("Ctrl","MNU", "Felis")
+        # BARPLOT
+        seed <- as.numeric(charToRaw(title)) %>% sum()
+        set.seed(seed)
         
+        if(is.null(color)){color <- "group"}
 
-        p <- p + facet_nested(. ~ location + strain + treat ,
-                              scales = "free",
-                              space='free',
-                              switch = 'x' , labeller = labeller(treat = treat.labs)) +
-            scale_x_discrete(labels=xlab) +
-            theme(panel.spacing=unit(0,"lines"),
-                  panel.border=element_rect(color="grey50", fill = 'transparent'),
-                  strip.text.x = element_text(size = x.size, face = 'bold'), 
-                  axis.text.x = element_text(vjust = 0.5))
+        p <- ggbarplot(geneCounts,
+                       x = x,
+                       y = "count",
+                       add = c("mean_se"),
+                       title = title,
+                       subtitle = subtitle,
+                       color = "black",
+                       fill = color,
+                       position = position_dodge(width = 0.7),
+                       alpha = 0.7,
+                       palette = cols,
+                       ylab = "Normalized Counts") +
+            geom_jitter(aes(fill = !!ensym(color)), 
+                        position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0), 
+                        shape = 21, color= 'black') +
+            scale_fill_manual(values = cols) +
+            scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
+            theme(title = element_text(size=title.size, face='bold'),
+                  plot.subtitle = element_text(size = subtitle.size, face='bold'),
+                  axis.text.x = element_text(size = x.size, face='bold', angle = x.angle, vjust = 0.5),
+                  axis.text.y = element_text(size = y.size, face='bold'),
+                  axis.title.y = element_text(size = y.size, face='bold'),
+                  axis.title.x = element_blank(),
+                  plot.background = element_blank(),
+                  panel.background = element_blank(),
+                  legend.background = element_blank(),
+                  legend.title = element_blank(),
+                  legend.position = legend.position)
         
-         }
-    
-    
-    if(sep.plot){
+    }else{
         
-        geneCounts.1 <- geneCounts[geneCounts$location == 'Antrum',]
-        geneCounts.2 <- geneCounts[geneCounts$location == 'Fundus',]
-        
-        p.1 <- ggboxplot(geneCounts.1, x = "group", y = "count", 
+        p <- ggboxplot(geneCounts, x = "group", y = "count", 
                        add = "jitter", 
-                       title = title, subtitle = subtitle,
-                       color = color, 
+                       title = title, 
+                       subtitle = subtitle,
                        fill = color,
                        alpha = alpha,
                        palette = 'lancet',
@@ -127,134 +115,24 @@ genePlot <- function(symbol=NULL,
                        width = 0.7, 
                        lwd = 0.5, 
                        fatten = 0.8) + 
-            scale_alpha_manual(values = c(0,0.2)) +
-            scale_color_manual(values = cols) + 
-            scale_fill_manual(values = cols) + 
             theme(title = element_text(size=title.size, face='bold'), 
                   plot.subtitle = element_text(size = subtitle.size,face='bold'),
                   axis.title.x = element_blank(),
                   axis.text.x = element_text(size = x.size, face='bold', angle = x.angle), 
                   axis.text.y = element_text(size = y.size, face='bold'), 
                   axis.title.y = element_text(size = y.size, face='bold'),
-                  legend.position = 'none') 
-        
-        p.2 <- ggboxplot(geneCounts.2, x = "group", y = "count", 
-                         add = "jitter", 
-                         title = title, subtitle = subtitle,
-                         color = color, 
-                         fill = color,
-                         alpha = alpha,
-                         palette = 'lancet',
-                         ylab = "Normalized Counts",
-                         width = 0.7, 
-                         lwd = 0.5, 
-                         fatten = 0.8) + 
-            scale_alpha_manual(values = c(0,0.2)) +
-            scale_color_manual(values = cols) + 
-            scale_fill_manual(values = cols) + 
-            theme(title = element_text(size=15, face='bold'), 
-                  plot.subtitle = element_text(size = 12,face='bold'),
-                  axis.title.x = element_blank(),
-                  axis.text.x = element_text(size = 18, face='bold', angle = x.angle), 
-                  axis.text.y = element_text(size = 18, face='bold'), 
-                  axis.title.y = element_text(size = 18, face='bold'),
                   plot.background = element_rect(fill = 'transparent'), 
                   panel.background = element_rect(fill = 'transparent'), 
-                  legend.position = 'none') 
+                  legend.position = legend.position) 
+        # https://stackoverflow.com/questions/15887461/remove-empty-factors-from-clustered-bargraph-in-ggplot2-with-multiple-facets
         
-        
-        treat.labs <- c("Ctrl", "H.felis",'MNU')
-        names(treat.labs) <- c("Ctrl", "Felis","MNU")
-        
-        p.1 <- p.1 +
-            facet_nested(. ~ strain + treat + week,
-                             scales = "free",
-                            space='free',
-                            switch = 'x', 
-                             labeller = labeller(treat = treat.labs)) +
-            scale_x_discrete(labels=xlab) +
-            ggtitle(label = 'Antrum', subtitle = NULL) + 
-            theme(panel.spacing=unit(0,"lines"),
-                  panel.border=element_rect(color="grey50", fill = 'transparent'),
-                  strip.text.x = element_text(size = 12, face = 'bold'))
-        
-        p.2 <- p.2 +
-            facet_nested(. ~ strain + treat + week,
-                         scales = "free",
-                         space='free',
-                         switch = 'x', 
-                         labeller = labeller(treat = treat.labs)) +
-            scale_x_discrete(labels=xlab) +
-            ggtitle(label = 'Fundus', subtitle = NULL) + 
-            theme(panel.spacing=unit(0,"lines"),
-                  panel.border=element_rect(color="grey50", fill = 'transparent'),
-                  strip.text.x = element_text(size = 12, face = 'bold'), 
-                  axis.title.y=element_blank())
-        
-        p <- wrap_plots(list(Antrum=p.1,Fundus =p.2), ncol = 2) + 
-            plot_annotation(title = title, subtitle = subtitle, 
-                            theme = theme(title = element_text(size=title.size, face='bold'), 
-                                          plot.subtitle = element_text(size = subtitle.size,face='bold'),
-                                          plot.background = element_rect(fill = 'transparent'), 
-                                          panel.background = element_rect(fill = 'transparent'))
-                            )
-            
     }
     
-    if(barplot){
-        
-        # BARPLOT
-        seed <- as.numeric(charToRaw(title)) %>% sum()
-        set.seed(seed)
-        p <- ggbarplot(geneCounts,
-                       x = "group",
-                       y = "count",
-                       add = "mean_se",
-                       title = title,
-                       subtitle = subtitle,
-                       color = "black",
-                       fill = color,
-                       alpha = 0.4,
-                       palette = cols,
-                       ylab = "Normalized Counts") +
-            geom_jitter(aes(fill = treat), height = 0, width = 0.2, shape = 21) +
-            scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
-            scale_x_discrete(label = label) +
-            theme(title = element_text(size=title.size, face='bold'),
-                  plot.subtitle = element_text(size = subtitle.size, face='bold'),
-                  axis.title.x = element_blank(),
-                  axis.text.x = element_text(size = x.size, face='bold', angle = x.angle, vjust = 0.5, hjust = 1),
-                  axis.text.y = element_text(size = y.size, face='bold'),
-                  axis.title.y = element_text(size = y.size, face='bold'),
-                  plot.background = element_rect(fill = 'transparent', colour = 'transparent'),
-                  panel.background = element_rect(fill = 'transparent', colour = 'transparent'),
-                  legend.position = 'none')
-        
-        # p <- ggplot(geneCounts, aes(x = group, y = count, fill = color)) +
-        #     geom_bar(stat = "identity", color = "black", alpha = 0.4) +
-        #     geom_errorbar(aes(ymin = count - sd, ymax = count + sd), width = 0.2) +
-        #     geom_jitter(aes(fill = color), width = 0.2, shape = 21) +
-        #     scale_fill_manual(values = cols) +
-        #     scale_y_continuous("Normalized Counts", expand = expansion(mult = c(0,0.1))) +
-        #     scale_x_discrete(label = label) + 
-        #     theme(title = element_text(size=title.size, face='bold'), 
-        #           plot.subtitle = element_text(size = subtitle.size, face='bold'),
-        #           axis.title.x = element_blank(),
-        #           axis.text.x = element_text(size = x.size, face='bold', angle = x.angle, vjust = 0.5, hjust = 1), 
-        #           axis.text.y = element_text(size = y.size, face='bold'), 
-        #           axis.title.y = element_text(size = y.size, face='bold'),
-        #           plot.background = element_rect(fill = 'transparent', colour = 'transparent'), 
-        #           panel.background = element_rect(fill = 'transparent', colour = 'transparent'), 
-        #           legend.position = 'none')
-    }
-    
+    if(!is.null(label)){p <- p +  scale_x_discrete(label = label)}
     
     if(force_zero == TRUE){
-        
-        p <- p & expand_limits( y = 0) 
-        
+        p <- p + expand_limits( y = 0) 
     }
-    
     
     if(stats == TRUE)
         {
@@ -265,7 +143,6 @@ genePlot <- function(symbol=NULL,
     
         }
     
-    
     if(saveplot){
         if(!dir.exists(savedir)){
             dir.create(savedir)
@@ -274,25 +151,14 @@ genePlot <- function(symbol=NULL,
         if(is.null(savename)){
             savename <- symbol
         }
-        
-        savename.mod <- savename
-        n <- 1
-        while(file.exists(file.path(savedir, paste0(savename.mod, '.', save.format)))) {
-            print(glue("{savename.mod} exists"))
-            savename.mod <- glue("{savename}_{n}")
-            n <- n + 1
-        }
-        # ggsave(filename = paste0(savename, '.svg'), device = 'svg', plot = p, path = savedir)
-        
-        ggsave( paste0(savename.mod, '_' ,title_suffix,  '.', save.format), 
+
+        ggsave( paste0(savename, '.', save.format), 
                 egg::set_panel_size(p, width=unit(4, "cm"), height=unit(5, "cm")), 
                width = save.x, height = save.y, units = 'cm', dpi = 300, path = savedir, device = save.format, bg = 'transparent')
         
     }
     
-    
     p
-    
 
 }
 
@@ -434,4 +300,95 @@ saveGenePlot <- function(symbols=NULL, gene_ids = NULL, path='./Figure/', width 
     
     
 }
+
+
+# for microarray 
+
+genePlot_array <- function(g, data, meta.data, x = "group", color = "group", cols = qualpal(20)$hex, boxplot = F){
+    
+    geneCounts <- data %>% filter(SYMBOL == g) 
+    subtitle <- geneCounts$gene_name[1]
+    title <- g
+    
+    geneCounts <- geneCounts[, c('probe_id','SYMBOL',meta.data$sample_id) ]
+    geneCounts <- geneCounts %>% pivot_longer(cols = -c('probe_id','SYMBOL'), names_to = 'sample_id', values_to = 'exp') %>% 
+        left_join(meta.data)
+
+    
+    if(boxplot){
+        
+        p <- ggboxplot(geneCounts,
+                       x = x,
+                       y = "exp",
+                       title = title,
+                       subtitle = subtitle,
+                       color = "black",
+                       fill = color,
+                       error.plot = 'erorbar',
+                       outlier.shape = NA,
+                      #position = position_dodge(width = 0.7),
+                       alpha = 0.7,
+                       palette =cols,
+                       ylab = "Normalized Intensity") +
+            geom_jitter(aes(fill = !!ensym(color)),
+                        position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0),
+                        shape = 21, color= 'black') +
+            scale_fill_manual(values = cols) +
+            theme(
+                title = element_text(size=12, face='bold'),
+                plot.subtitle = element_text(size = 7, face='bold'),
+                axis.text.x = element_text(size = 10, face='bold', angle = 90, vjust = 0.5, hjust = 1),
+                axis.text.y = element_text(size = 10, face='bold'),
+                axis.title.x = element_blank(),
+                axis.title.y = element_text(size = 10, face='bold'),
+                plot.background = element_blank(),
+                panel.background = element_blank(),
+                legend.background = element_blank(),
+                legend.title = element_blank(),
+                legend.position = "none"
+            )
+        p
+        
+    }else{
+        
+        p <- ggbarplot(geneCounts,
+                       x = x,
+                       y = "exp",
+                       add = c("mean_se"),
+                       title = title,
+                       subtitle = subtitle,
+                       color = "black",
+                       fill = color,
+                       position = position_dodge(width = 0.7),
+                       alpha = 0.7,
+                       palette =cols,
+                       ylab = "Normalized Intensity") +
+            geom_jitter(aes(fill = !!ensym(color)), 
+                        position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0), 
+                        shape = 21, color= 'black') +
+            scale_fill_manual(values = cols) +
+            scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
+            theme(
+                title = element_text(size=12, face='bold'),
+                plot.subtitle = element_text(size = 7, face='bold'),
+                axis.text.x = element_text(size = 10, face='bold', angle = 90, vjust = 0.5, hjust = 1),
+                axis.text.y = element_text(size = 10, face='bold'),
+                axis.title.x = element_blank(),
+                axis.title.y = element_text(size = 10, face='bold'),
+                plot.background = element_blank(),
+                panel.background = element_blank(),
+                legend.background = element_blank(),
+                legend.title = element_blank(),
+                legend.position = "none"
+            )
+        p
+        
+    }
+    
+    
+    
+}
+
+
+
 
