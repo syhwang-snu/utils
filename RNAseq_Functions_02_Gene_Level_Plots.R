@@ -7,6 +7,7 @@ sunset.col <- c("grey","#FFDDC1", "#FFAB80", "#FF5252", "#B71C1C")
 
 genePlot <- function(symbol=NULL,
                      gene_id=NULL,
+                     data.only = NULL,
                      dds=dds.all, 
                      cols = sunset.col,
                      meta.data = meta.data, 
@@ -56,7 +57,6 @@ genePlot <- function(symbol=NULL,
     }
     if(!is.null(meta.data)){
         
-
         geneCounts <- geneCounts %>% rownames_to_column('sample_id') %>% left_join(meta.data)
     }
     
@@ -72,6 +72,7 @@ genePlot <- function(symbol=NULL,
         set.seed(seed)
         
         if(is.null(color)){color <- "group"}
+        if(!is.null(data.only)){return(geneCounts)}
 
         p <- ggbarplot(geneCounts,
                        x = x,
@@ -92,7 +93,8 @@ genePlot <- function(symbol=NULL,
             scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
             theme(title = element_text(size=title.size, face='bold'),
                   plot.subtitle = element_text(size = subtitle.size, face='bold'),
-                  axis.text.x = element_text(size = x.size, face='bold', angle = x.angle, vjust = 0.5),
+                  axis.text.x = element_text(size = x.size, face='bold', 
+                                             angle = x.angle, vjust = 0.5, hjust = 1),
                   axis.text.y = element_text(size = y.size, face='bold'),
                   axis.title.y = element_text(size = y.size, face='bold'),
                   axis.title.x = element_blank(),
@@ -295,10 +297,7 @@ saveGenePlot <- function(symbols=NULL, gene_ids = NULL, path='./Figure/', width 
         ggsave(filename = glue('{symbols[i]}.png'), 
                plot = l[[i]],
                device = device, units = "cm", width = width, height = height, path = path, dpi = dpi)
-        
     }
-    
-    
 }
 
 
@@ -314,7 +313,6 @@ genePlot_array <- function(g, data, meta.data, x = "group", color = "group", col
     geneCounts <- geneCounts %>% pivot_longer(cols = -c('probe_id','SYMBOL'), names_to = 'sample_id', values_to = 'exp') %>% 
         left_join(meta.data)
 
-    
     if(boxplot){
         
         p <- ggboxplot(geneCounts,
@@ -365,7 +363,7 @@ genePlot_array <- function(g, data, meta.data, x = "group", color = "group", col
                        ylab = "Normalized Intensity") +
             geom_jitter(aes(fill = !!ensym(color)), 
                         position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0), 
-                        shape = 21, color= 'black') +
+                        shape = 21, color= 'black') + 
             scale_fill_manual(values = cols) +
             scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
             theme(
@@ -382,10 +380,7 @@ genePlot_array <- function(g, data, meta.data, x = "group", color = "group", col
                 legend.position = "none"
             )
         p
-        
     }
-    
-    
     
 }
 

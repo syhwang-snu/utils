@@ -1,15 +1,23 @@
 
 
+# 2025-05-17
+# getAllenrichedPathways_manual 
+# 
+# get every pathways with term2gene, term2name in the list format. 
+# 
+# 2025-04-07
+# change minor errors. (getAllGSEA)
+# 
 # 2024-12-30
 # Pathway analysis functions 
 # change addgenefoldchange 
+# 
 #
 # UPDATE in 2023-11-21 : modify functions 
 # - set gene.annotation entrez to character
 # - modify setentrezToSymbol , addGeneFoldChange with tidyverse left_join
 # 
 # UPDATE in 2023-10-19 : using mouse/human pathway both .... 
-# 
 # 
 
 
@@ -18,21 +26,14 @@ library(clusterProfiler)
 library(enrichplot)
 library(tidyverse)
 library(data.table)
+library(BiocParallel)
 
 
 # change this to your pathway version
-pathway.version <- "E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202409"
+pathway.version <- "E:/2022_SysPharm_HSY/13_Scripts/PathwayAnalysis/Pathways_202505/"
 
 message(glue('Pathway version : {pathway.version}'))
 
-
-# pwfiles_ori <- list.files(path = pathway.version,pattern = "term.*\\.RDS$",
-#                           recursive = TRUE, full.names = TRUE)
-# for (file in pwfiles_ori) {
-#   file_name <- basename(file)
-#   destination <- file.path(pathway.version, file_name)
-#   file.rename(file, destination)
-# }
 
 pwfiles <- list.files(path = pathway.version,pattern = "term.*\\.RDS$")
 
@@ -293,7 +294,7 @@ getAllenrichPathways <- function(symbols=NULL,
         
       for(i in 1:length(modules)){
           try(expr = {
-              pathways[[modules[i]]] <- setentrezToSymbol(setentrezToSymbol[[modules[i]]], 
+              pathways[[modules[i]]] <- setentrezToSymbol(pathways[[modules[i]]], 
                                                           gene.annotation = gene.pw.annotation)
               message(glue('{modules[i]} set Entrez ID to SYMBOL'))
           })
@@ -327,7 +328,124 @@ getAllenrichPathways <- function(symbols=NULL,
 }
 
 
-setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation, gsea = FALSE){
+getAllenrichedPathways_manual <- function(symbols = NULL,
+                                          entrez = NULL,
+                                          pwlist,
+                                          all.entrez.id,
+                                          dds.all.entrez.id = NULL,
+                                          pvalcutoff = 0.2,
+                                          minCount = 2,
+                                          GO.Evidence.IEA = TRUE,
+                                          addGeneFoldChange = TRUE,
+                                          fc_data = NULL,
+                                          minGSSize = 2,
+                                          maxGSSize = Inf,
+                                          gene.pw.annotation = NULL,
+                                          simplifyByTopGenes = FALSE,
+                                          make2df = TRUE) {
+    
+    # 기본 검증
+    if (!exists("all.entrez.id")) {
+        message("...no all entrez id"); return(NULL)
+    }
+    if (!is.null(dds.all.entrez.id)) {
+        message("intersecting dds.all.entrez.id with all.entrez.id")
+        all.entrez.id <- intersect(dds.all.entrez.id, all.entrez.id)
+    }
+    
+    # SYMBOL → Entrez 변환
+    if (is.null(entrez) && !is.null(symbols)) {
+        message("Converting SYMBOL to Entrez...")
+        entrez <- gene.pw.annotation$entrez[gene.pw.annotation$SYMBOL %in% symbols]
+    }
+    
+    # fold change 데이터가 필요한데 없을 때
+    if (addGeneFoldChange && is.null(fc_data)) {
+        message("...add fold change data requested, but fc_data is NULL"); return(NULL)
+    }
+    
+    # 결과 저장용
+    pathways <- list()
+    
+    # enrichment 가능한 항목 리스트업
+    term_types <- names(pwlist)[grepl("\\.term2gene$", names(pwlist))]
+    term_modules <- gsub("\\.term2gene$", "", term_types)
+    
+    message(glue("Enrichment analysis with: {paste(term_modules, collapse = ', ')}"), appendLF = T)
+    
+    for (i in seq_along(term_types)) {
+        term_name <- term_modules[i]
+        term2gene <- pwlist[[term_types[i]]]
+        
+        # TERM2NAME 처리
+        term2name_key <- sub("term2gene", "term2name", term_types[i])
+        term2name <- if (term2name_key %in% names(pwlist)) pwlist[[term2name_key]] else NULL
+        
+        # IEA evidence 제거 (GO 전용)
+        if (!GO.Evidence.IEA && "Evidence" %in% colnames(term2gene)) {
+            term2gene <- term2gene[term2gene$Evidence != "IEA", ]
+        }
+        
+        message(glue("{term_name} enrichment analysis..."))
+        
+        # enrichment 실행
+        try({
+            res <- enricher(
+                gene = entrez,
+                TERM2GENE = term2gene,
+                TERM2NAME = term2name,
+                pvalueCutoff = pvalcutoff,
+                qvalueCutoff = 1,
+                minGSSize = minGSSize,
+                maxGSSize = maxGSSize,
+                pAdjustMethod = "BH",
+                universe = all.entrez.id
+            )
+            res@result <- res@result %>%
+                dplyr::filter(p.adjust < pvalcutoff & Count >= minCount)
+            pathways[[term_name]] <- res
+        }, silent = TRUE)
+    }
+    
+    # 모듈 리스트
+    modules <- names(pathways[!sapply(pathways, is.null)])
+    
+    # 후처리: fold change or SYMBOL 매핑
+    for (mod in modules) {
+        try({
+            if (addGeneFoldChange) {
+                pathways[[mod]] <- addGeneFoldChange(pathways[[mod]], fc_data = fc_data)
+                message(glue("{mod}: added gene fold change"))
+            } else {
+                pathways[[mod]] <- setentrezToSymbol(pathways[[mod]], gene.annotation = gene.pw.annotation)
+                message(glue("{mod}: set Entrez ID to SYMBOL"))
+            }
+        })
+    }
+    
+    # Top gene 기준 simplify
+    if (simplifyByTopGenes) {
+        for (mod in modules) {
+            try({
+                pathways[[mod]] <- simplifyByTopGenes(pathways[[mod]])
+                message(glue("{mod}: simplified by top genes"))
+            })
+        }
+    }
+    
+    message(glue("Finished loading: {paste(modules, collapse = ', ')}"))
+    
+    # 결과를 DataFrame으로
+    if (make2df) {
+        message("Converting pathways to data frame...")
+        pathways <- pathways_to_df(pathways)
+    }
+    
+    return(pathways)
+}
+
+
+setentrezToSymbol <- function(enrichresult, gene.annotation, gsea = FALSE){
     
     x <- enrichresult@result
     if(is.null(x)){
@@ -336,7 +454,7 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation, g
     }
     message(' set entrez ID to gene symbol using gene annotation file')
     
-
+    
     x <- x %>% separate_rows(geneID, sep = "/") %>% 
         left_join(gene.annotation %>% dplyr::select(entrez, SYMBOL) %>% distinct(), 
                   by = c('geneID'='entrez')) %>% 
@@ -344,7 +462,8 @@ setentrezToSymbol <- function(enrichresult, gene.annotation = gene.annotation, g
         dplyr::select(-SYMBOL) %>% 
         group_by(ID) %>% 
         mutate(geneID = paste0(geneID, collapse = "/")) %>% distinct()
-
+    
+    
     enrichresult@result <- x
     return(enrichresult)
     
@@ -456,6 +575,7 @@ pathways_to_df <- function(enrichresult){
 }
 
 getAllGSEA <- function(geneList, 
+                       symbol  =FALSE,
                        pvalcutoff = 0.2, 
                        minCount = 2,
                        GO.Evidence.IEA = TRUE,
@@ -484,10 +604,11 @@ getAllGSEA <- function(geneList,
     
     message(glue('Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
     
-    # if(is.null(entrez)){
-    #     message("Convert Symbol To Entrez ID...")
-    #     entrez <- gene.annotation$entrez[gene.annotation$SYMBOL %in% symbols]
-    # }
+    if(symbol == TRUE){
+        message("Convert Symbol To Entrez ID...")
+        names(geneList) <- gene.pw.annotation$entrez[match(x = names(geneList), table = gene.pw.annotation$SYMBOL)]
+        geneList <- geneList[!is.na(names(geneList))]
+    }
     
     names(pwlist) <- gsub(x = names(pwlist), pattern = '^(human|mouse)\\.', replacement = '')
     
@@ -498,11 +619,6 @@ getAllGSEA <- function(geneList,
                                    simplify = F, USE.NAMES = F)
     }
     
-    
-    if(addGeneFoldChange == TRUE){
-        if(is.null(fc_data)){ message("...add fold change data ..."); return('') }}
-    
-    message(glue('GSEA Enrichment analysis with \n {paste0(names(pwlist), collapse = " ")}'))
     
     
     cat('GO BP GSEA...\n')
@@ -988,7 +1104,10 @@ get_intersect_pathway <- function(l, anti = FALSE){
 
 
 
-pathwaybarplot <- function(pw.df,title = NULL, desc_width = 50){
+pathwaybarplot <- function(pw.df, 
+                           title = NULL, 
+                           desc_width = 50, 
+                           colors = colorRampPalette(c("white", "darkorange"))(50)){
     
     # 240107
     
@@ -998,9 +1117,9 @@ pathwaybarplot <- function(pw.df,title = NULL, desc_width = 50){
         scale_x_discrete(label = function(x) stringr::str_wrap(x, width = desc_width),limits = rev) +
         ggtitle(label = title) + 
         scale_y_continuous(expand = expansion(mult = c(0,0.1))) + 
-        scale_fill_gradientn(colors = colorRampPalette(c("white", "darkorange"))(50), 
+        scale_fill_gradientn(colors = colors, 
                              values = c(1,0),
-                             limits = c(0, 0.2),
+                             limits = c(0, 0.1),
                              oob = scales::squish,
                              name = 'Adj.P.Value') +
         theme_classic() + 
@@ -1020,5 +1139,8 @@ pathwaybarplot <- function(pw.df,title = NULL, desc_width = 50){
     
 }
 
-
+# ggsave(glue(g, '_{cells}.png'), 
+#        egg::set_panel_size(p, width=unit(4, "cm"), height=unit(5, "cm")), 
+#        width = 6, height = 8, units = 'cm', dpi = 300, path = asra.plots,
+#        device = 'png', bg = 'transparent')
 
